@@ -1,0 +1,15 @@
+{
+  "task_id": "m1-cloud-preparation",
+  "goal": "Prepare the source, local media preflight and remote GPU bootstrap without inference or GPU spending",
+  "acceptance": ["Pinned unmodified upstream", "Installable CLI and help", "Consent and bad input rejection", "Real synthetic-media dry-run with audio inspection and no media writes", "Reproducible commands", "Independent scoped review"],
+  "boundaries": ["Work in /workspace/face-replace", "Preserve sibling project", "No GPU rental, model downloads, service uploads or remote push", "Do not alter upstream safety", "No project PASS before real labeled audio-preserving face inference"],
+  "budget": {"max_attempts": 3, "max_minutes": 45, "gpu_spend_rmb": 0, "future_gpu_budget_rmb": 200},
+  "gates": [
+    ".venv/bin/python -m unittest discover -s tests -v",
+    ".venv/bin/ruff check src tests scripts/verify_gpu.py",
+    ".venv/bin/ruff format --check src tests scripts/verify_gpu.py",
+    "bash -n scripts/setup_source.sh scripts/setup_remote_gpu.sh",
+    ".venv/bin/python -m face_replace --help"
+  ],
+  "completion_scope": "Milestone 1 only; project and GPU inference NOT_VERIFIED"
+}
