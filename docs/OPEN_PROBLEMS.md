@@ -1,9 +1,12 @@
 # Outstanding work
 
-- M2: implement FaceFusion subprocess adapter, both-input safety screening, visible
-  labeling, metadata, audio retention, output verification and private temp cleanup.
+- The CPU pipeline and worker orchestration are implemented and covered by synthetic
+  fake-worker FFmpeg tests. Real FaceFusion execution, models, classifier behavior on
+  real face media, and remote GPU behavior remain NOT_VERIFIED.
 - Review full OpenRAIL-AS terms and each exact model's rights; prepare download sizes,
   origins/checksums and purpose, then obtain user approval before downloading weights.
+- Model manifest records source-derived metadata, but exact byte sizes and SHA-256
+  values remain unknown because metadata access was blocked; resolve before download.
 - Official hosted FaceFusion installation docs returned HTTP 403; inspect them when
   access becomes available. Pinned upstream installer/CI were inspected instead.
 - Python package and CUDA installer execution on the remote host remain unverified.
@@ -15,8 +18,10 @@
 - ai-native-engineering at b9deb83 has no license file. Its workflow conventions were
   inspected; original project-specific instructions are supplied. Importing tooling,
   CLI adapters and hooks requires clarified reuse terms and project-specific integration.
-- No project remote configured; no source has been pushed. Cloud snapshot publication
-  is separate from this local preparation and has not been verified in a fresh task.
+- Project remote is configured and prior commits are pushed. Latest M2 CPU changes
+  remain under independent review. Cloud snapshot restoration in a fresh task remains
+  unverified.
 
-Highest-value next action: complete the CPU-testable M2 safety/output adapter and
-model/license/download manifest before considering a GPU rental.
+Highest-value next action: clear CPU reviewer findings and verify model rights/sizes
+before preparing a GPU approval packet. Actual GPU inference remains blocked on GPU,
+model weights, authorized test media and spending approval.

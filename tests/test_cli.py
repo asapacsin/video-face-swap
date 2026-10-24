@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from face_replace.__main__ import InputError, main, probe
+from face_replace.pipeline import PipelineError, run_pipeline
 
 
 class CLITest(unittest.TestCase):
@@ -170,6 +171,51 @@ class CLITest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("--consent-confirmed", result.stdout)
+
+    def test_pipeline_with_fake_worker_labels_and_retains_audio(self):
+        output = self.root / "pipeline-result.mp4"
+        worker = self.root / "fake_worker.py"
+        worker.write_text(
+            "import shutil, sys\n"
+            "args = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n"
+            "shutil.copyfile(args['--video'], args['--output'])\n"
+        )
+        try:
+            result = run_pipeline(self.video, self.face, output, worker)
+            self.assertEqual(result["status"], "created")
+            self.assertTrue(output.is_file())
+            media = probe(output, "source video")
+            self.assertEqual(media["audio_streams"], 1)
+            self.assertEqual(media["frame_rate"], "24")
+            metadata = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_format", "-of", "json", str(output)],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            self.assertIn("AI-ALTERED", metadata.stdout)
+            frame = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", str(output), "-frames:v", "1", "-f", "null", "-"],
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(frame.returncode, 0)
+            self.assertGreater(output.stat().st_size, 0)
+        finally:
+            output.unlink(missing_ok=True)
+            worker.unlink(missing_ok=True)
+
+    def test_pipeline_worker_failure_publishes_no_output(self):
+        output = self.root / "failed-result.mp4"
+        worker = self.root / "failing_worker.py"
+        worker.write_text("raise SystemExit(1)\n")
+        try:
+            with self.assertRaises(PipelineError):
+                run_pipeline(self.video, self.face, output, worker)
+            self.assertFalse(output.exists())
+        finally:
+            worker.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

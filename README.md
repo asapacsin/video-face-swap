@@ -1,14 +1,16 @@
-# Face replacement — milestone 1 preparation
+# Face replacement — CPU pipeline preparation
 
-Status: **M1 source preparation; full project NOT_VERIFIED**. This CLI inspects a
-local video and authorized reference image and prints a plan. It does not yet swap
-faces or generate a labeled output. No GPU rental or model download is needed for M1.
+Status: **CPU pipeline implemented; full project NOT_VERIFIED**. Help and dry-run
+work without models. Inference uses a fixed FaceFusion worker, requires the pinned
+upstream checkout, approved model files and a compatible GPU. CPU fake-worker tests
+exercise finalization, labeling, audio retention and output validation, not face quality.
 
 Backend selected provisionally: FaceFusion at
 `72470819a0373be3388b3929c8f8f311f418fc3c`, with its safety code untouched. See
 [architecture](docs/ARCHITECTURE.md), [consent policy](docs/PRIVACY_AND_CONSENT.md),
 [environment](docs/ENVIRONMENT.md), [review](docs/REVIEW_REPORT.md), and
-[remaining work](docs/OPEN_PROBLEMS.md).
+[remaining work](docs/OPEN_PROBLEMS.md), [model manifest](docs/MODEL_MANIFEST.md),
+and [project plan](docs/PROJECT_PLAN.md).
 
 ## Reproduce local setup
 

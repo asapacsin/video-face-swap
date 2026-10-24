@@ -30,6 +30,7 @@ def probe(path: Path, kind: str) -> dict:
                 "-protocol_whitelist",
                 "file,pipe",
                 "-show_streams",
+                "-count_frames",
                 "-show_format",
                 "-of",
                 "json",
@@ -57,7 +58,8 @@ def probe(path: Path, kind: str) -> dict:
     try:
         duration = float(data.get("format", {}).get("duration", 0))
         fps = Fraction(video.get("avg_frame_rate", "0/1"))
-        if not math.isfinite(duration) or duration <= 0 or fps <= 0:
+        nominal_fps = Fraction(video.get("r_frame_rate", "0/1"))
+        if not math.isfinite(duration) or duration <= 0 or fps <= 0 or nominal_fps != fps:
             raise ValueError
     except (ValueError, ZeroDivisionError) as exc:
         raise InputError("source video must have positive duration and frame rate") from exc
@@ -67,6 +69,7 @@ def probe(path: Path, kind: str) -> dict:
         "frame_rate": str(fps),
         "duration_seconds": duration,
         "audio_streams": sum(s.get("codec_type") == "audio" for s in streams),
+        "video_frames": int(video.get("nb_read_frames", 0)),
     }
 
 
@@ -88,7 +91,6 @@ def parser() -> argparse.ArgumentParser:
         help="Operator assessment; never substitutes for safety checks",
     )
     p.add_argument("--dry-run", action="store_true", help="Inspect only; no inference or output")
-    p.add_argument("--worker", type=Path, help="Pinned FaceFusion worker script for GPU execution")
     return p
 
 
@@ -108,17 +110,21 @@ def main(argv=None) -> int:
             raise InputError("output already exists; choose a new path")
         if not output.parent.is_dir():
             raise InputError("output parent directory must already exist")
-        print("Inspecting local media; inference is disabled.", file=sys.stderr)
+        print(
+            "Inspecting local media; inference is disabled."
+            if args.dry_run
+            else "Validating media and starting the pinned FaceFusion worker.",
+            file=sys.stderr,
+        )
         source = probe(args.video, "source video")
         reference = probe(args.face, "reference image")
-        if not args.dry_run and not args.worker:
-            print("inference requires --worker; no output written", file=sys.stderr)
-            return 3
         if not args.dry_run:
             from face_replace.pipeline import PipelineError, run_pipeline
 
             try:
-                result = run_pipeline(args.video, args.face, output, args.worker)
+                project_root = Path(__file__).resolve().parents[2]
+                worker = project_root / "scripts" / "facefusion_worker.py"
+                result = run_pipeline(args.video, args.face, output, worker)
             except (InputError, PipelineError) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 3

@@ -1,9 +1,11 @@
 """Safe orchestration and output finalization for the FaceFusion worker."""
 
 import os
-import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 from face_replace.__main__ import InputError, probe
@@ -14,8 +16,29 @@ class PipelineError(RuntimeError):
 
 
 def _run(command: list[str], timeout: int) -> subprocess.CompletedProcess:
+    process = None
     try:
-        return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=True)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        stdout, stderr = process.communicate(timeout=timeout)
+        if process.returncode:
+            raise PipelineError("media processing failed")
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired as exc:
+        if process is not None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        raise PipelineError("media processing timed out") from exc
+    except KeyboardInterrupt:
+        if process is not None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+        raise
     except (subprocess.SubprocessError, OSError) as exc:
         raise PipelineError("media processing failed") from exc
 
@@ -31,12 +54,12 @@ def run_pipeline(video: Path, face: Path, output: Path, worker: Path, timeout: i
         raise InputError("output parent directory must already exist")
     source = probe(video, "source video")
     probe(face, "reference image")
-    with tempfile.TemporaryDirectory(prefix="face-replace-") as scratch_name:
+    with tempfile.TemporaryDirectory(prefix=".face-replace-", dir=output.parent) as scratch_name:
         scratch = Path(scratch_name)
         os.chmod(scratch, 0o700)
         intermediate = scratch / "swapped.mp4"
         command = [
-            "python",
+            sys.executable,
             str(worker),
             "--video",
             str(video),
@@ -44,6 +67,8 @@ def run_pipeline(video: Path, face: Path, output: Path, worker: Path, timeout: i
             str(face),
             "--output",
             str(intermediate),
+            "--upstream",
+            str(worker.parent.parent / "upstream-facefusion"),
         ]
         _run(command, timeout)
         if not intermediate.is_file():
@@ -56,8 +81,12 @@ def run_pipeline(video: Path, face: Path, output: Path, worker: Path, timeout: i
                 "-nostdin",
                 "-v",
                 "error",
+                "-protocol_whitelist",
+                "file,pipe",
                 "-i",
                 str(intermediate),
+                "-protocol_whitelist",
+                "file,pipe",
                 "-i",
                 str(video),
                 "-map",
@@ -65,7 +94,7 @@ def run_pipeline(video: Path, face: Path, output: Path, worker: Path, timeout: i
                 "-map",
                 "1:a?",
                 "-vf",
-                "drawtext=text='AI-ALTERED':x=12:y=12:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.65",
+                "drawtext=text='AI-ALTERED':x=12:y=12:fontsize='min(24,w/14)':fontcolor=white:box=1:boxcolor=black@0.65",
                 "-metadata",
                 "comment=AI-ALTERED face replacement",
                 "-c:v",
@@ -84,25 +113,43 @@ def run_pipeline(video: Path, face: Path, output: Path, worker: Path, timeout: i
         )
         result = probe(candidate, "generated output")
         if abs(result["duration_seconds"] - source["duration_seconds"]) > max(
-            0.25, 1 / float(source["frame_rate"])
+            0.25, float(1 / Fraction(source["frame_rate"]))
         ):
             raise PipelineError("generated output duration differs from source")
-        if result["frame_rate"] != source["frame_rate"] or (
-            source["audio_streams"] and not result["audio_streams"]
-        ):
+        if result["frame_rate"] != source["frame_rate"]:
             raise PipelineError("generated output timing or audio validation failed")
+        if result["audio_streams"] != source["audio_streams"]:
+            raise PipelineError("generated output audio stream count differs from source")
+        if result["video_frames"] != source["video_frames"]:
+            raise PipelineError("generated output frame count differs from source")
+        if (result["width"], result["height"]) != (source["width"], source["height"]):
+            raise PipelineError("generated output dimensions differ from source")
+        _run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-xerror",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-i",
+                str(candidate),
+                "-map",
+                "0",
+                "-f",
+                "null",
+                "-",
+            ],
+            timeout,
+        )
         # Hard-link publication is atomic and fails if destination appeared meanwhile.
         try:
             os.link(candidate, output)
         except FileExistsError as exc:
             raise InputError("output appeared during processing; refusing to overwrite") from exc
-        except OSError:
-            # Same filesystem is expected (scratch uses system temp); copy via exclusive create.
-            try:
-                with candidate.open("rb") as src, output.open("xb") as dst:
-                    shutil.copyfileobj(src, dst)
-            except FileExistsError as exc:
-                raise InputError(
-                    "output appeared during processing; refusing to overwrite"
-                ) from exc
+        except OSError as exc:
+            raise PipelineError(
+                "cannot atomically publish output on destination filesystem"
+            ) from exc
         return {"status": "created", "output": str(output), "media": result}
