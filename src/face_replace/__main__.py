@@ -88,6 +88,7 @@ def parser() -> argparse.ArgumentParser:
         help="Operator assessment; never substitutes for safety checks",
     )
     p.add_argument("--dry-run", action="store_true", help="Inspect only; no inference or output")
+    p.add_argument("--worker", type=Path, help="Pinned FaceFusion worker script for GPU execution")
     return p
 
 
@@ -110,12 +111,19 @@ def main(argv=None) -> int:
         print("Inspecting local media; inference is disabled.", file=sys.stderr)
         source = probe(args.video, "source video")
         reference = probe(args.face, "reference image")
-        if not args.dry_run:
-            print(
-                "NOT_VERIFIED: inference is not implemented in milestone 1; use --dry-run.",
-                file=sys.stderr,
-            )
+        if not args.dry_run and not args.worker:
+            print("inference requires --worker; no output written", file=sys.stderr)
             return 3
+        if not args.dry_run:
+            from face_replace.pipeline import PipelineError, run_pipeline
+
+            try:
+                result = run_pipeline(args.video, args.face, output, args.worker)
+            except (InputError, PipelineError) as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 3
+            print(json.dumps(result, indent=2))
+            return 0
         print(
             json.dumps(
                 {
