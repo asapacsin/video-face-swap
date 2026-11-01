@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {"id": "unit-tests-pass", "min_level": "unit", "gate_ids": ["unit-tests"], "terminal_required": false},
+    {"id": "lint-clean", "min_level": "static", "gate_ids": ["ruff-check", "ruff-format"], "terminal_required": false}
+  ]
+}

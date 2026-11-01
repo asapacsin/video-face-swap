@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "task_id": "local-720p-gui",
+  "goal": "Run a consent-gated face swap locally on Windows: convert any readable movie to 720p MP4, choose one target character, and offer a click-to-run window, with the independent reviewer flow added.",
+  "acceptance": "Required gates pass. Inputs of any readable container become 720p MP4 without upscaling. One target character is selected rather than refusing multi-face frames. Consent, full-frame screening and the AI-ALTERED label remain enforced, failures publish no output, and the job stops rather than silently using the CPU. Docs state only what was measured. Real GPU behavior beyond the recorded short clips is NOT_VERIFIED and must be reported as such.",
+  "boundaries": [
+    "Follow the project review checklist in docs/REVIEWER.md",
+    "Review the whole working-tree diff against base_commit, including untracked files",
+    "scripts/ai_native is copied from the owner's repository; review only the changes listed in its PROVENANCE.md",
+    "Never edit files, commit or run face inference during review"
+  ],
+  "base_commit": "830b062fc96df02b627d8e89724a9d92fa227885",
+  "approved_paths": [
+    "src/**",
+    "tests/**",
+    "scripts/**",
+    "docs/**",
+    "verification/contracts/**",
+    "README.md",
+    "pyproject.toml",
+    "FaceSwap.bat",
+    ".github/pull_request_template.md"
+  ],
+  "budgets": {
+    "max_attempts": 1,
+    "max_total_seconds": 1500,
+    "reviewer_timeout_seconds": 1200
+  },
+  "gates": [
+    {
+      "id": "unit-tests",
+      "level": "unit",
+      "command": [
+        ".venv-gpu\\Scripts\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests"
+      ],
+      "timeout_seconds": 240
+    },
+    {
+      "id": "ruff-check",
+      "level": "static",
+      "command": [
+        ".venv-gpu\\Scripts\\ruff.exe",
+        "check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "id": "ruff-format",
+      "level": "static",
+      "command": [
+        ".venv-gpu\\Scripts\\ruff.exe",
+        "format",
+        "--check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "timeout_seconds": 60
+    }
+  ]
+}

@@ -21,6 +21,8 @@ where = ["src"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# Copied from ai-native-engineering; see scripts/ai_native/PROVENANCE.md.
+extend-exclude = ["scripts/ai_native"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
