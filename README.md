@@ -1,9 +1,23 @@
-# Face replacement — CPU pipeline preparation
+# Face replacement — consent-gated 720p movie pipeline
 
-Status: **CPU pipeline implemented; full project NOT_VERIFIED**. Help and dry-run
-work without models. Inference uses a fixed FaceFusion worker, requires the pinned
-upstream checkout, approved model files and a compatible GPU. CPU fake-worker tests
-exercise finalization, labeling, audio retention and output validation, not face quality.
+Status: **Short clips verified on a local RTX 4050; full-length movies NOT_VERIFIED**.
+Inference uses a fixed FaceFusion worker, requires the pinned upstream checkout,
+approved model files and a compatible GPU. See [benchmarks](docs/BENCHMARKS.md).
+
+## Use the app on Windows
+
+First time only, from PowerShell in this folder (downloads about 5 GB):
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1 -Models
+```
+
+Then double-click `FaceSwap.bat`, choose the movie and photo, tick the confirmation
+and press **Start**. Any readable movie is converted to a 720p MP4 (never upscaled),
+and the result is saved beside it as `<movie>-swapped-720p.mp4` with an `AI-ALTERED`
+label and the first audio track. `<movie>-swapped-720p-character.jpg` boxes the face
+that was replaced. To choose another character, enter a time when their face is the
+largest on screen. Every frame is screened, and one refused frame stops the whole job.
 
 Backend selected provisionally: FaceFusion at
 `72470819a0373be3388b3929c8f8f311f418fc3c`, with its safety code untouched. See
@@ -46,8 +60,8 @@ media is non-explicit and authorized, and the use is not impersonation, harassme
 or deception. `--content-rating explicit` refuses the request. Dry-run does not
 screen content, recognize a face, contact a GPU or write media. It reports dimensions,
 duration, frame rate and audio presence without private paths. Exit codes: 0 successful
-dry-run/help, 2 invalid input/consent, 3 inference unavailable. Omitting `--dry-run`
-currently returns 3 after validation; no output is written.
+dry-run/help or finished job, 2 invalid input/consent, 3 inference failed or refused.
+Omitting `--dry-run` runs the job; a failed job publishes no output.
 
 ## Synthetic CPU smoke fixture (not face inference)
 

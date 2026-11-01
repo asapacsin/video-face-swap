@@ -11,6 +11,9 @@ from pathlib import Path
 
 from face_replace import FACEFUSION_REVISION
 
+# Long enough to read through a full-length movie file on a slow disk.
+PROBE_TIMEOUT_SECONDS = 600
+
 
 class InputError(ValueError):
     pass
@@ -30,15 +33,16 @@ def probe(path: Path, kind: str) -> dict:
                 "-protocol_whitelist",
                 "file,pipe",
                 "-show_streams",
-                "-count_frames",
+                "-count_packets",
                 "-show_format",
                 "-of",
                 "json",
                 str(path.resolve()),
             ],
             capture_output=True,
-            text=True,
-            timeout=30,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_SECONDS,
             check=True,
         )
         data = json.loads(result.stdout)
@@ -58,8 +62,7 @@ def probe(path: Path, kind: str) -> dict:
     try:
         duration = float(data.get("format", {}).get("duration", 0))
         fps = Fraction(video.get("avg_frame_rate", "0/1"))
-        nominal_fps = Fraction(video.get("r_frame_rate", "0/1"))
-        if not math.isfinite(duration) or duration <= 0 or fps <= 0 or nominal_fps != fps:
+        if not math.isfinite(duration) or duration <= 0 or fps <= 0:
             raise ValueError
     except (ValueError, ZeroDivisionError) as exc:
         raise InputError("source video must have positive duration and frame rate") from exc
@@ -69,15 +72,36 @@ def probe(path: Path, kind: str) -> dict:
         "frame_rate": str(fps),
         "duration_seconds": duration,
         "audio_streams": sum(s.get("codec_type") == "audio" for s in streams),
-        "video_frames": int(video.get("nb_read_frames", 0)),
+        "video_frames": int(video.get("nb_read_packets", 0)),
     }
+
+
+def clock_seconds(value: str) -> float:
+    """Accept seconds or [HH:]MM:SS for picking the target character."""
+    try:
+        seconds = 0.0
+        for part in value.split(":"):
+            seconds = seconds * 60 + float(part)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("use seconds or HH:MM:SS") from exc
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("use seconds or HH:MM:SS")
+    return seconds
 
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Prepare a consensual adult, non-explicit video job.")
     p.add_argument("--video", required=True, type=Path)
     p.add_argument("--face", required=True, type=Path)
-    p.add_argument("--output", required=True, type=Path)
+    p.add_argument(
+        "--output", type=Path, help="New .mp4 path; defaults to <video>-swapped-720p.mp4 beside it"
+    )
+    p.add_argument(
+        "--character-time",
+        type=clock_seconds,
+        help="Replace the largest face at this movie time (seconds or HH:MM:SS); "
+        "defaults to the face seen most often",
+    )
     p.add_argument(
         "--consent-confirmed",
         action="store_true",
@@ -101,7 +125,8 @@ def main(argv=None) -> int:
             raise InputError("affirmative --consent-confirmed attestation is required")
         if args.content_rating == "explicit":
             raise InputError("known explicit content is refused")
-        output = args.output.resolve()
+        default_output = args.video.with_name(f"{args.video.stem}-swapped-720p.mp4")
+        output = (args.output or default_output).resolve()
         if output in {args.video.resolve(), args.face.resolve()}:
             raise InputError("output must not overwrite either input")
         if output.suffix.lower() != ".mp4":
@@ -124,7 +149,9 @@ def main(argv=None) -> int:
             try:
                 project_root = Path(__file__).resolve().parents[2]
                 worker = project_root / "scripts" / "facefusion_worker.py"
-                result = run_pipeline(args.video, args.face, output, worker)
+                result = run_pipeline(
+                    args.video, args.face, output, worker, character_time=args.character_time
+                )
             except (InputError, PipelineError) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 3
@@ -136,12 +163,13 @@ def main(argv=None) -> int:
                     "mode": "dry-run",
                     "backend": "FaceFusion",
                     "revision": FACEFUSION_REVISION,
-                    "execution_target": "rented Linux NVIDIA GPU (not contacted)",
+                    "execution_target": "local or rented NVIDIA GPU (not contacted)",
                     "source": source,
                     "reference": reference,
                     "safety_screening": "NOT_RUN; dry-run is not content approval",
                     "planned_output": {
                         "container": "mp4",
+                        "max_height": 720,
                         "visible_label": "AI-ALTERED",
                         "audio": "preserve source audio",
                         "metadata": "AI-altered",

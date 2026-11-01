@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import io
 import json
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from face_replace.__main__ import InputError, main, probe
+from face_replace.__main__ import InputError, clock_seconds, main, probe
 from face_replace.pipeline import PipelineError, run_pipeline
 
 
@@ -159,8 +160,28 @@ class CLITest(unittest.TestCase):
             with self.assertRaises(InputError):
                 probe(self.video, "source video")
 
-    def test_inference_closed(self):
-        self.assertEqual(self.run_cli([x for x in self.args() if x != "--dry-run"])[0], 3)
+    def test_pipeline_failure_returns_3_with_message(self):
+        with patch(
+            "face_replace.pipeline.run_pipeline", side_effect=PipelineError("no target face")
+        ):
+            code, _, error = self.run_cli([x for x in self.args() if x != "--dry-run"])
+        self.assertEqual(code, 3)
+        self.assertIn("no target face", error)
+
+    def test_default_output_is_beside_video(self):
+        args = [x for x in self.args() if x != "--dry-run"]
+        del args[4:6]
+        with patch("face_replace.pipeline.run_pipeline", return_value={}) as mock:
+            self.assertEqual(self.run_cli(args)[0], 0)
+        self.assertEqual(
+            mock.call_args.args[2], (self.root / "synthetic-swapped-720p.mp4").resolve()
+        )
+
+    def test_character_time_formats(self):
+        self.assertEqual(clock_seconds("90.5"), 90.5)
+        self.assertEqual(clock_seconds("01:02:03"), 3723.0)
+        with self.assertRaises(argparse.ArgumentTypeError):
+            clock_seconds("soon")
 
     def test_help_entrypoint(self):
         result = subprocess.run(
@@ -204,6 +225,134 @@ class CLITest(unittest.TestCase):
             self.assertGreater(output.stat().st_size, 0)
         finally:
             output.unlink(missing_ok=True)
+            worker.unlink(missing_ok=True)
+
+    def fake_worker(self):
+        worker = self.root / "fake_worker.py"
+        worker.write_text(
+            "import shutil, sys\n"
+            "args = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n"
+            "shutil.copyfile(args['--video'], args['--output'])\n"
+        )
+        return worker
+
+    def test_pipeline_converts_mkv_movie_to_720p_mp4(self):
+        movie = self.root / "movie.mkv"
+        output = self.root / "movie-result.mp4"
+        worker = self.fake_worker()
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=1920x1080:r=24",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                str(movie),
+            ],
+            check=True,
+            timeout=60,
+        )
+        try:
+            media = run_pipeline(movie, self.face, output, worker)["media"]
+            self.assertEqual((media["width"], media["height"]), (1280, 720))
+            self.assertEqual(media["audio_streams"], 1)
+            # The overlay box must really be drawn, not only recorded as metadata.
+            frame = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(output),
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-",
+                ],
+                capture_output=True,
+                check=True,
+                timeout=30,
+            ).stdout
+            corner = frame[(20 * 1280 + 20) * 3 + 2]
+            far = frame[(600 * 1280 + 900) * 3 + 2]
+            self.assertGreater(far, 150)
+            self.assertLess(corner, 150)
+        finally:
+            for path in (movie, output, worker):
+                path.unlink(missing_ok=True)
+
+    def test_pipeline_never_upscales(self):
+        output = self.root / "small-result.mp4"
+        worker = self.fake_worker()
+        try:
+            media = run_pipeline(self.video, self.face, output, worker)["media"]
+            self.assertEqual((media["width"], media["height"]), (64, 64))
+        finally:
+            output.unlink(missing_ok=True)
+            worker.unlink(missing_ok=True)
+
+    def test_variable_frame_rate_source_is_accepted(self):
+        movie = self.root / "vfr.mp4"
+        output = self.root / "vfr-result.mp4"
+        worker = self.fake_worker()
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=320x240:r=30",
+                "-t",
+                "2",
+                "-vf",
+                "select=not(eq(n\\,10))",
+                "-fps_mode",
+                "vfr",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(movie),
+            ],
+            check=True,
+            timeout=30,
+        )
+        try:
+            self.assertEqual(run_pipeline(movie, self.face, output, worker)["status"], "created")
+        finally:
+            for path in (movie, output, worker):
+                path.unlink(missing_ok=True)
+
+    def test_worker_refusal_message_reaches_user(self):
+        output = self.root / "refused-result.mp4"
+        worker = self.root / "refusing_worker.py"
+        worker.write_text(
+            "import sys\n"
+            "print('face-replace-error: video screening refused', file=sys.stderr)\n"
+            "raise SystemExit(2)\n"
+        )
+        try:
+            with self.assertRaisesRegex(PipelineError, "video screening refused"):
+                run_pipeline(self.video, self.face, output, worker)
+            self.assertFalse(output.exists())
+        finally:
             worker.unlink(missing_ok=True)
 
     def test_pipeline_worker_failure_publishes_no_output(self):
