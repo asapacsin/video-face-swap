@@ -34,8 +34,8 @@ age, authorization or explicit content by itself. The dry-run marks screening NO
 M2 output acceptance: one readable MP4, visible persistent `AI-ALTERED` overlay,
 metadata identifying AI alteration, matching frame rate/order, approximate resolution,
 source audio retained (copy compatible codecs, otherwise explicit AAC transcode),
-duration checked against source, atomic final rename, private temporary workspace
-cleaned after success and on controlled failure. No raw media or private filenames in logs.
+duration checked against source, atomic final rename, private resumable job folder
+cleaned after success and on final refusal. No raw media or private filenames in logs.
 These are requirements, not implemented output behavior in M1.
 
 ## GPU decision and risk

@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import shutil
+import signal
 import subprocess
 import sys
 from fractions import Fraction
@@ -114,8 +115,34 @@ def parser() -> argparse.ArgumentParser:
         default="unknown",
         help="Operator assessment; never substitutes for safety checks",
     )
+    p.add_argument(
+        "--scan-only",
+        action="store_true",
+        help="Convert and screen the movie, list its characters, then stop before swapping",
+    )
+    p.add_argument(
+        "--character",
+        type=int,
+        default=0,
+        help="Number of the scanned character to replace; 0 is the face seen most often",
+    )
+    p.add_argument(
+        "--confirmed-job",
+        help="Job the character number was confirmed in; the run stops if the inputs changed since",
+    )
     p.add_argument("--dry-run", action="store_true", help="Inspect only; no inference or output")
     return p
+
+
+def stop_workers_on_signals() -> None:
+    """The worker has its own session, so a stopped CLI must end it rather than leave it billing."""
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), interrupt)
 
 
 def main(argv=None) -> int:
@@ -146,14 +173,33 @@ def main(argv=None) -> int:
         if not args.dry_run:
             from face_replace.pipeline import PipelineError, run_pipeline
 
+            stop_workers_on_signals()
             try:
                 project_root = Path(__file__).resolve().parents[2]
                 worker = project_root / "scripts" / "facefusion_worker.py"
                 result = run_pipeline(
-                    args.video, args.face, output, worker, character_time=args.character_time
+                    args.video,
+                    args.face,
+                    output,
+                    worker,
+                    character_time=args.character_time,
+                    character=args.character,
+                    scan_only=args.scan_only,
+                    confirmed_job=args.confirmed_job,
                 )
-            except (InputError, PipelineError) as exc:
+            except PipelineError as exc:
                 print(f"error: {exc}", file=sys.stderr)
+                return 3
+            except OSError:
+                # The exception's text can hold private paths, so it is not shown.
+                print(
+                    "error: could not read or write the job's files; "
+                    "check the output folder is writable and the disk has space",
+                    file=sys.stderr,
+                )
+                return 3
+            except KeyboardInterrupt:
+                print("error: stopped; run the same command again to resume", file=sys.stderr)
                 return 3
             print(json.dumps(result, indent=2))
             return 0

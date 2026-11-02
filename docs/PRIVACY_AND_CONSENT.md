@@ -18,5 +18,10 @@ approve the host, access permissions and deletion plan first. Do not sync privat
 with code by default. Use private directories (umask 077), encrypted SSH, and remove
 inputs, outputs and temporary media from rented storage when no longer needed.
 Do not retain personal filenames, frames, embeddings, credentials or raw stderr in logs.
+Raw worker output is not stored. A job that stops without a final refusal keeps a private
+`.face-replace-job-*` folder beside the output so it can resume: it holds the 720p copy, swapped
+segments, frame previews and, until the scan ends, face embeddings. On Windows its permissions are
+inherited from the output folder. It is removed on success, on a final refusal and when the owner
+cancels without keeping progress. Otherwise delete it by hand if the job will not resume.
 Keep inputs, weights, credentials and generated media out of Git. Gitignore is a guard,
 not a substitute for inspecting staged files. Storage deletion is not guaranteed forensic erasure.

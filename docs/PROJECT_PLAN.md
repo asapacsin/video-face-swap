@@ -37,8 +37,8 @@ has no remote; source persistence currently depends on this workspace/snapshot.
   frame count and expected audio before publishing output.
 - Never overwrite input or existing output. Use a private temporary directory and
   publish the validated file without clobbering a concurrently created destination.
-  Clean temporary media on success, errors and handled interruption; document
-  manual cleanup after forced termination or host failure.
+  Clean temporary media on success and final refusals. A job that can resume keeps its private
+  folder, as described in PRIVACY_AND_CONSENT.md, and needs manual cleanup if it is abandoned.
 - Keep media on the operator's machine or approved GPU host. No default analytics
   or face-processing services. Logs contain stages, timings and generic error codes,
   without media, credentials, private paths or captured sensitive backend output.

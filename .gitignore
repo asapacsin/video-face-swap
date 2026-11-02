@@ -16,6 +16,7 @@ media/
 .assets/
 .cache/
 .ai-native/
+.face-replace-job-*/
 logs/
 *.log
 *.onnx
