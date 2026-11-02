@@ -611,6 +611,50 @@ class CLITest(unittest.TestCase):
             for path in (output, preview, worker):
                 path.unlink(missing_ok=True)
 
+    def test_a_failed_preview_after_publishing_still_finishes_the_job(self):
+        output = self.root / "preview-fails.mp4"
+        worker = self.fake_worker()
+        before = set(self.root.glob(".face-replace-job-*"))
+        real_read = Path.read_bytes
+
+        def read_bytes(path):
+            if path.name.endswith(".json.png"):
+                raise OSError("disk full")
+            return real_read(path)
+
+        try:
+            with patch.object(Path, "read_bytes", read_bytes):
+                result = run_pipeline(self.video, self.face, output, worker)
+            self.assertEqual(result["status"], "created")
+            self.assertTrue(output.is_file())
+            self.assertFalse(output.with_name("preview-fails-character.png").exists())
+            self.assertEqual(set(self.root.glob(".face-replace-job-*")) - before, set())
+        finally:
+            for job in set(self.root.glob(".face-replace-job-*")) - before:
+                shutil.rmtree(job)
+            for path in (output, output.with_name("preview-fails-character.png"), worker):
+                path.unlink(missing_ok=True)
+
+    def test_an_unreadable_backend_segment_is_a_processing_failure(self):
+        output = self.root / "corrupt-segment.mp4"
+        worker = self.root / "corrupt_worker.py"
+        worker.write_text(
+            FAKE_WORKER.replace(
+                'if args["--mode"] == "swap":',
+                'if args["--mode"] == "swap":\n    open(args["--output"], "w").write("junk")\n'
+                "    raise SystemExit(0)\nif False:",
+            )
+        )
+        before = set(self.root.glob(".face-replace-job-*"))
+        try:
+            with self.assertRaisesRegex(PipelineError, "swapped segment is not readable"):
+                run_pipeline(self.video, self.face, output, worker)
+            self.assertFalse(output.exists())
+        finally:
+            for job in set(self.root.glob(".face-replace-job-*")) - before:
+                shutil.rmtree(job)
+            worker.unlink(missing_ok=True)
+
     def test_scan_prints_no_absolute_path(self):
         output = self.root / "private-result.mp4"
         worker = self.fake_worker()
@@ -729,7 +773,7 @@ class CLITest(unittest.TestCase):
         self.assertIn("could not read or write", err.getvalue())
         self.assertNotIn("/private/job", err.getvalue())
 
-    def test_stop_signals_end_the_worker_through_the_interrupt_path(self):
+    def test_stop_signals_raise_the_interrupt_that_stops_the_worker(self):
         from face_replace.__main__ import stop_workers_on_signals
 
         handlers = {}
@@ -881,7 +925,7 @@ class WorkerScanTest(unittest.TestCase):
             self.assertEqual(analyser.analyse_video("movie", 1, 2), refused)
             self.assertEqual(calls, [("movie", 1, 2), "cleared"])
 
-    def test_pick_uses_the_largest_face_or_stops_without_refusing(self):
+    def test_pick_uses_the_found_face_or_stops_without_refusing(self):
         saved = []
         ff = argparse.Namespace(
             read_frame=lambda video, frame: "frame",

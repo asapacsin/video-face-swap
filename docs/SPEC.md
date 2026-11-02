@@ -65,7 +65,7 @@ current code on the 4050.
 | F3 | Default to the face seen most often; allow a time to choose another character | Default tested on real clips; the time option has CPU tests with fake workers only |
 | F4 | Show the chosen character and require confirmation before the long swap starts | Tested in the window with a fake job; not clicked by hand with a real job |
 | F5 | Replace only faces matching the chosen character | Partial: checked by eye on sampled frames of one two-person clip, choosing each person; not frame by frame |
-| F6 | Keep the first audio track and the original timing | Tested on clips up to 10 minutes |
+| F6 | Keep the first audio track and the original timing | Tested on clips up to 10 minutes; joins with audio tested over 2 segments only, so drift across a full film is unmeasured |
 | F7 | Show stage, percent, elapsed time and estimated time left | Tested with fake workers; the bar moves per finished segment, so it stays still during the scan and each segment; time left appears in the log |
 | F8 | Cancel a job, keeping progress or removing it | Tested with a fake job: removal on cancel and on closing the window. Keeping progress is offered in both but not tested in the window |
 | F9 | Save progress and resume after a crash, power loss or cancel | Tested for segments: a real job killed after segment 1 of 2 resumed. Scan-checkpoint resume has CPU unit tests only; power loss not tested |
@@ -125,7 +125,7 @@ checked by eye on sampled frames only.
 |---|---|---|---|
 | P1 | Run a whole job without a GPU driver crash | Met: the same CUDA error 700 appeared here with 4 screening threads; with serial screening, the 65-second clip ran twice and the 10-minute job ran clean | **Failing until retested:** 4-thread screening hit CUDA error 700 partway through (see BENCHMARKS.md); serial screening has run here only on a 10.8-second clip |
 | P2 | Stay on the GPU; stop with an error if any model falls back to the CPU | Partial: a forced no-GPU run was refused at start with no output; a fallback during a job is NOT_VERIFIED | Partial: checked at start only |
-| P3 | Record peak VRAM; on the 4050 it must stay within 6 GB | 6093 MiB on the film clip with the current code; 8128 MiB before the screening models were freed | 4.2–5.4 GB on short clips |
+| P3 | Record peak VRAM; on the 4050 it must stay within 6 GB | 6093 MiB on the film clip (see docs/BENCHMARKS.md); 8128 MiB before the screening models were freed | 4.2–5.4 GB on short clips |
 | P4 | Finish a 2-hour, 24 fps movie, with the overall rate recorded | Not run, by owner decision. Measured 2.3–3.6 frames/s on clips of 65 seconds and 10 minutes | Within 24 hours, at least 2 frames/s overall |
 | P5 | Pause when the GPU reaches 85°C and continue once cooled | Not required | Missing |
 | P6 | Stop the laptop sleeping during a job | Not applicable | Built, not tested over a long run |

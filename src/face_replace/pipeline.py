@@ -211,6 +211,14 @@ def _check_disk(directory: Path, duration: float, job: Path) -> None:
         )
 
 
+def _probe_backend(path: Path, kind: str) -> dict:
+    """Media the app made itself is a processing failure, not bad input, when unreadable."""
+    try:
+        return probe(path, kind)
+    except InputError as exc:
+        raise PipelineError(f"{kind} is not readable media") from exc
+
+
 def _remove_job(job: Path) -> None:
     try:
         shutil.rmtree(job)
@@ -420,7 +428,7 @@ def _run_job(
         )
         if not partial.is_file():
             raise PipelineError("backend produced no output")
-        if probe(partial, "source video")["video_frames"] != end - start:
+        if _probe_backend(partial, "swapped segment")["video_frames"] != end - start:
             raise PipelineError("swapped segment frame count differs from source")
         partial.replace(segment)
         processed += 1
@@ -474,7 +482,7 @@ def _run_job(
         ],
         timeout,
     )
-    result = probe(candidate, "generated output")
+    result = _probe_backend(candidate, "generated output")
     if abs(result["duration_seconds"] - source["duration_seconds"]) > max(0.25, float(1 / fps)):
         raise PipelineError("generated output duration differs from source")
     if result["frame_rate"] != source["frame_rate"]:
@@ -512,9 +520,15 @@ def _run_job(
     except OSError as exc:
         raise PipelineError("cannot atomically publish output on destination filesystem") from exc
     # The preview shows a movie frame, so it is published only with a finished result.
+    preview = output.with_name(f"{output.stem}-character.png")
     try:
-        with output.with_name(f"{output.stem}-character.png").open("xb") as file:
-            file.write(Path(chosen["preview"]).read_bytes())
+        data = Path(chosen["preview"]).read_bytes()
+        with preview.open("xb") as file:
+            file.write(data)
     except FileExistsError:
         info("kept the existing character preview")
+    except OSError:
+        # The verified MP4 is already published; a missing preview must not fail the job.
+        preview.unlink(missing_ok=True)
+        info("the movie is done, but the character preview could not be saved")
     return {"status": "created", "output": str(output), "media": result}
