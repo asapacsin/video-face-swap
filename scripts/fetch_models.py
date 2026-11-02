@@ -28,18 +28,34 @@ MODELS = {
 
 
 def fetch(url: str, path: Path) -> None:
+    # Resumes from the partial file, so a slow link still finishes; gives up only without progress.
     partial = path.with_name(path.name + ".part")
-    for attempt in range(1, 6):
+    stalled = 0
+    while True:
+        before = partial.stat().st_size if partial.exists() else 0
+        request = urllib.request.Request(url, headers={"Range": f"bytes={before}-"})
         try:
-            with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as file:
-                shutil.copyfileobj(response, file, 1024 * 1024)
+            with urllib.request.urlopen(request, timeout=60) as response:
+                # A server that ignores the range sends the whole file again.
+                with partial.open("ab" if response.status == 206 else "wb") as file:
+                    start = file.tell()
+                    shutil.copyfileobj(response, file, 1024 * 1024)
+                    expected = response.headers.get("Content-Length")
+                    # A connection closed cleanly mid-file raises nothing, so check its length.
+                    if expected is not None and file.tell() - start != int(expected):
+                        raise TimeoutError("download ended early")
             partial.replace(path)
             return
         except OSError as exc:
-            if attempt == 5:
+            if getattr(exc, "code", None) == 416:
+                # The range starts at or past the end, so this partial file cannot be continued.
+                partial.unlink()
+            after = partial.stat().st_size if partial.exists() else 0
+            stalled = 0 if after > before else stalled + 1
+            if stalled == 5:
                 raise
             print(f"retrying {path.name} after {type(exc).__name__}", file=sys.stderr)
-            time.sleep(5 * attempt)
+            time.sleep(5 * stalled)
 
 
 def verified(model: Path, expected_crc: Path) -> bool:

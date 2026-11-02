@@ -1,128 +1,78 @@
 # Face replacement — consent-gated 720p movie pipeline
 
-Status: **Short clips verified on a local RTX 4050; full-length movies NOT_VERIFIED**.
-Inference uses a fixed FaceFusion worker, requires the pinned upstream checkout,
-approved model files and a compatible GPU. See [benchmarks](docs/BENCHMARKS.md).
+Status: **Short clips and a 15-second film clip verified on a rented GPU server; full-length movies
+and the current code on the RTX 4050 are NOT_VERIFIED**. Inference uses a fixed FaceFusion worker,
+and requires the pinned upstream checkout, approved model files and a compatible GPU. See the
+[product spec](docs/SPEC.md) and [benchmarks](docs/BENCHMARKS.md).
+
+## Run on the rented server
+
+Phase 1 runs all GPU work here. From the repo root on an Ubuntu NVIDIA server with CUDA 13 (downloads
+about 5 GB of packages and 1.47 GB of models):
+
+```bash
+bash scripts/setup_cloud.sh
+```
+
+Scan first to see who can be replaced. This prints the candidates and saves a preview of each:
+
+```bash
+.venv-gpu/bin/python -m face_replace --video assets/movie.mp4 --face assets/photo.jpg --output outputs/result.mp4 --consent-confirmed --scan-only
+```
+
+Then run the job with the chosen candidate number, starting at 0:
+
+```bash
+.venv-gpu/bin/python -m face_replace --video assets/movie.mp4 --face assets/photo.jpg --output outputs/result.mp4 --consent-confirmed --character 0
+```
+
+If a job stops, run the same command again and it resumes from the last finished 5-minute segment.
+Progress is kept in a `.face-replace-job-*` folder beside the output until the job succeeds.
 
 ## Use the app on Windows
 
-First time only, from PowerShell in this folder (downloads about 5 GB):
+This is phase 2 and has not yet been proven with the current code. First time only, from PowerShell
+in this folder (downloads about 5 GB):
 
 ```bash
 powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1 -Models
 ```
 
-Then double-click `FaceSwap.bat`, choose the movie and photo, tick the confirmation
-and press **Start**. Any readable movie is converted to a 720p MP4 (never upscaled),
-and the result is saved beside it as `<movie>-swapped-720p.mp4` with an `AI-ALTERED`
-label and the first audio track. `<movie>-swapped-720p-character.jpg` boxes the face
-that was replaced. To choose another character, enter a time when their face is the
-largest on screen. Every frame is screened, and one refused frame stops the whole job.
+1. Double-click `FaceSwap.bat`, choose the movie and photo, and tick the confirmation.
+2. Press **Scan**, then choose the character to replace in the window that opens.
+3. Press **Start swap**. You can instead enter a time when the character's face is the largest on
+   screen and press **Start swap** directly. This skips only the confirmation window: every frame is
+   still screened first, so it takes just as long.
 
-Backend selected provisionally: FaceFusion at
-`72470819a0373be3388b3929c8f8f311f418fc3c`, with its safety code untouched. See
-[architecture](docs/ARCHITECTURE.md), [consent policy](docs/PRIVACY_AND_CONSENT.md),
-[environment](docs/ENVIRONMENT.md), [review](docs/REVIEW_REPORT.md), and
-[remaining work](docs/OPEN_PROBLEMS.md), [model manifest](docs/MODEL_MANIFEST.md),
-and [project plan](docs/PROJECT_PLAN.md).
+Any readable movie is converted to a 720p MP4 (never upscaled). The result is saved beside it as
+`<movie>-swapped-720p.mp4` with an `AI-ALTERED` label and the first audio track, and
+`<movie>-swapped-720p-character.png` boxes the face that was replaced. Every frame is screened, and
+one refused frame stops the whole job.
 
-## Reproduce local setup
+Backend: FaceFusion at `72470819a0373be3388b3929c8f8f311f418fc3c`, with its safety code untouched.
+See [architecture](docs/ARCHITECTURE.md), [consent policy](docs/PRIVACY_AND_CONSENT.md),
+[environment](docs/ENVIRONMENT.md), [reviewer](docs/REVIEWER.md),
+[remaining work](docs/OPEN_PROBLEMS.md) and [model manifest](docs/MODEL_MANIFEST.md).
 
-Prerequisites: Git, Python 3.12 with venv/pip, FFmpeg/ffprobe. Transfer this project
-directory or restore its cloud snapshot; no project remote is configured. The
-ignored upstream checkout is reproducible from its pin.
+## Consent and exit codes
 
-```bash
-cd /workspace/face-replace
-bash scripts/setup_source.sh
-.venv/bin/python -m face_replace --help
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/ruff check src tests scripts/verify_gpu.py
-.venv/bin/ruff format --check src tests scripts/verify_gpu.py
-bash -n scripts/setup_source.sh scripts/setup_remote_gpu.sh
-```
+Attestation means all people whose identities are used are consenting adults, media is non-explicit
+and authorized, and the use is not impersonation, harassment or deception. `--content-rating
+explicit` refuses the request. `--dry-run` checks the inputs and reports dimensions, duration, frame
+rate and audio presence without screening, using a GPU or writing media.
 
-Setup can be repeated. It refuses to reset a changed upstream checkout. Weights,
-assets, media, virtual environments and nested upstream Git history are ignored.
-Review `git status` before staging. Nothing is pushed.
+Exit codes: 0 successful dry-run, help or finished job; 2 invalid input or consent; 3 inference failed
+or refused. A failed job publishes no output.
 
-## Dry-run with local files
+## Tests
+
+CPU tests use fake workers and do not prove GPU inference. Install `.[dev]`, then:
 
 ```bash
-mkdir -p outputs
-.venv/bin/python -m face_replace \
-  --video /absolute/path/input.mp4 --face /absolute/path/authorized-face.jpg \
-  --output "$PWD/outputs/result.mp4" --consent-confirmed --dry-run
+PYTHONPATH=src python -m unittest discover -s tests
 ```
-
-Attestation means all people whose identities are used are consenting adults,
-media is non-explicit and authorized, and the use is not impersonation, harassment
-or deception. `--content-rating explicit` refuses the request. Dry-run does not
-screen content, recognize a face, contact a GPU or write media. It reports dimensions,
-duration, frame rate and audio presence without private paths. Exit codes: 0 successful
-dry-run/help or finished job, 2 invalid input/consent, 3 inference failed or refused.
-Omitting `--dry-run` runs the job; a failed job publishes no output.
-
-## Synthetic CPU smoke fixture (not face inference)
-
 ```bash
-mkdir -p assets outputs
-ffmpeg -v error -f lavfi -i color=c=blue:s=64x64:r=24 \
-  -f lavfi -i sine=frequency=440:sample_rate=48000 -t 1 \
-  -c:v libx264 -pix_fmt yuv420p -c:a aac assets/synthetic.mp4
-ffmpeg -v error -f lavfi -i color=c=green:s=64x64 \
-  -frames:v 1 -threads 1 assets/synthetic.png
-.venv/bin/python -m face_replace --video assets/synthetic.mp4 \
-  --face assets/synthetic.png --output outputs/synthetic-result.mp4 \
-  --consent-confirmed --dry-run
+python -m ruff check src tests scripts
 ```
 
-Generated colors and tone contain no identities and filenames identify them as
-synthetic. They validate inspection only, not face suitability. Tests create
-equivalent fixtures in temporary directories and remove them.
-
-## Remote GPU commands — only after rental approval
-
-Do not rent yet. User supplies host/access securely and approves GPU, tariff,
-billing granularity, storage cost, runtime cap and shutdown procedure within about
-RMB 200. Prefer Linux x86_64 with Python 3.12, CUDA 12.8+, cuDNN 9, FFmpeg and
-NVIDIA drivers. Scripts never change drivers. These remote commands are prepared,
-not executed. Replace `GPU_HOST` with the approved SSH alias and use SSH agent/key
-configuration. Code sync excludes local inputs, outputs and secrets.
-
-```bash
-cd /workspace/face-replace
-ssh GPU_HOST 'umask 077; mkdir -p ~/face-replace'
-rsync -az --filter=':- .gitignore' --exclude='.git/' ./ GPU_HOST:face-replace/
-ssh GPU_HOST 'cd ~/face-replace && bash scripts/setup_source.sh'
-# Before installation, verify-only is expected to report missing GPU venv:
-ssh GPU_HOST 'cd ~/face-replace && bash scripts/setup_remote_gpu.sh --verify-only'
-ssh GPU_HOST 'cd ~/face-replace && bash scripts/setup_remote_gpu.sh --install'
-ssh GPU_HOST 'cd ~/face-replace && bash scripts/setup_remote_gpu.sh --verify-only'
-```
-
-`--install` invokes pinned upstream `install.py cuda@12 --skip-conda` inside
-`.venv-gpu`, then pip checks and an actual ONNX CUDA MatMul test. It installs
-packages, never model weights. An existing CUDA/cuDNN image is required. Checks
-identify B200/H800, inspect loaded runtime/cuDNN and require actual CUDA kernel
-profiling evidence. The nvidia-smi CUDA ceiling alone is insufficient.
-Full remote installation and repeatability remain NOT_VERIFIED until run there.
-
-After approving private media storage on the host, transfer the authorized assets
-separately (they are excluded from code sync):
-
-```bash
-ssh GPU_HOST 'umask 077; mkdir -p ~/face-replace/assets ~/face-replace/outputs'
-scp /path/to/licensed-adult-clip.mp4 GPU_HOST:face-replace/assets/input.mp4
-scp /path/to/authorized-adult-face.jpg GPU_HOST:face-replace/assets/reference.jpg
-ssh GPU_HOST 'cd ~/face-replace && .venv-gpu/bin/python -m face_replace \
-  --video assets/input.mp4 --face assets/reference.jpg --output outputs/result.mp4 \
-  --consent-confirmed --dry-run'
-```
-
-That is the first runnable remote CLI command today. The eventual E2E command is
-the same with `--dry-run` removed, **after M2 and exact model/download approvals**;
-today it intentionally exits 3. Required E2E assets: short licensed/synthetic adult
-non-explicit face video with audio, authorized adult reference, approved face/safety
-model weights, verified GPU environment. Output must have visible AI labeling and
-retained audio before project PASS. See [benchmark plan](docs/BENCHMARKS.md).
+Weights, assets, media, virtual environments and the upstream checkout are ignored by Git.

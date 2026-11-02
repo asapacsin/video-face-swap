@@ -2,8 +2,10 @@
 
 import argparse
 import ctypes
+import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +16,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from face_replace.__main__ import clock_seconds
+from face_replace.pipeline import job_directory
 
 MOVIE_TYPES = [("Movies", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts"), ("All files", "*.*")]
 PHOTO_TYPES = [("Photos", "*.jpg *.jpeg *.png *.webp")]
@@ -22,6 +25,7 @@ CONSENT_TEXT = (
     "The movie and photo are non-explicit and I am allowed to use them. "
     "The result is not for impersonation, deception or harassment."
 )
+WORKER = Path(__file__).resolve().parents[2] / "scripts" / "facefusion_worker.py"
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
 
@@ -36,7 +40,15 @@ def default_output(video: Path) -> Path:
     return candidate
 
 
-def build_command(video: Path, face: Path, output: Path, character_time: str = "") -> list[str]:
+def build_command(
+    video: Path,
+    face: Path,
+    output: Path,
+    character_time: str = "",
+    character: int = 0,
+    scan_only: bool = False,
+    confirmed_job: str | None = None,
+) -> list[str]:
     # pythonw has no console, so the job itself runs under the matching python.exe.
     python = Path(sys.executable)
     if python.name.lower() == "pythonw.exe":
@@ -46,7 +58,30 @@ def build_command(video: Path, face: Path, output: Path, character_time: str = "
     command += ["--consent-confirmed"]
     if character_time:
         command += ["--character-time", character_time]
+    else:
+        if character:
+            command += ["--character", str(character)]
+        if confirmed_job:
+            command += ["--confirmed-job", confirmed_job]
+    if scan_only:
+        command += ["--scan-only"]
     return command
+
+
+def parse_candidates(line: str) -> list[dict] | None:
+    prefix = "face-replace-candidates: "
+    return json.loads(line.strip().removeprefix(prefix)) if line.startswith(prefix) else None
+
+
+def parse_percent(text: str) -> float | None:
+    # Upstream bars restart for each stage and segment, so only whole-job progress moves the bar.
+    match = re.match(r"swapped segment .*?(\d+(?:\.\d+)?)%", text)
+    return float(match.group(1)) if match else None
+
+
+def parse_job(line: str) -> str | None:
+    prefix = "face-replace-job: "
+    return line.strip().removeprefix(prefix) if line.startswith(prefix) else None
 
 
 def display_line(line: str) -> str | None:
@@ -75,6 +110,12 @@ class App:
         self.result = None
         self.pending_output = None
         self.scratch_before = set()
+        self.scanning = False
+        self.candidates = []
+        self.character = 0
+        self.confirmed = False
+        self.confirmed_job = None
+        self.job_name = None
         self.lines = queue.Queue()
         self.movie = tk.StringVar()
         self.photo = tk.StringVar()
@@ -82,6 +123,7 @@ class App:
         self.character_time = tk.StringVar()
         self.consent = tk.BooleanVar()
         self.status = tk.StringVar(value="Choose a movie and a photo.")
+        self.input_widgets = []
 
         root.title("Face Swap (720p)")
         root.geometry("680x600")
@@ -100,9 +142,10 @@ class App:
         self.add_file_row(frame, 2, "Save as", self.output, self.choose_output)
 
         ttk.Label(frame, text="Character time").grid(row=3, column=0, sticky="w", pady=4)
-        ttk.Entry(frame, textvariable=self.character_time, width=12).grid(
-            row=3, column=1, sticky="w", padx=8
-        )
+        time_entry = ttk.Entry(frame, textvariable=self.character_time, width=12)
+        time_entry.grid(row=3, column=1, sticky="w", padx=8)
+        self.input_widgets.append(time_entry)
+        self.character_time.trace_add("write", lambda *_: self.refresh_buttons())
         ttk.Label(
             frame,
             text="Optional, e.g. 00:12:34. Replaces the largest face at that moment. "
@@ -118,18 +161,27 @@ class App:
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=6, column=0, columnspan=3, sticky="w", pady=6)
-        self.start_button = ttk.Button(buttons, text="Start", command=self.start)
+        self.scan_button = ttk.Button(buttons, text="Scan", command=self.scan)
+        self.start_button = ttk.Button(buttons, text="Start swap", command=self.start)
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel)
         self.open_button = ttk.Button(buttons, text="Open result", command=self.open_result)
         self.folder_button = ttk.Button(buttons, text="Open folder", command=self.open_folder)
         for column, button in enumerate(
-            (self.start_button, self.cancel_button, self.open_button, self.folder_button)
+            (
+                self.scan_button,
+                self.start_button,
+                self.cancel_button,
+                self.open_button,
+                self.folder_button,
+            )
         ):
             button.grid(row=0, column=column, padx=(0, 6))
 
         self.log = tk.Text(frame, height=10, wrap="word", state="disabled")
         self.log.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=6)
-        ttk.Label(frame, textvariable=self.status).grid(row=8, column=0, columnspan=3, sticky="w")
+        self.progress = ttk.Progressbar(frame, maximum=100)
+        self.progress.grid(row=8, column=0, columnspan=3, sticky="ew")
+        ttk.Label(frame, textvariable=self.status).grid(row=9, column=0, columnspan=3, sticky="w")
 
         self.refresh_buttons()
         self.root.after(200, self.poll)
@@ -138,8 +190,11 @@ class App:
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
         entry = ttk.Entry(frame, textvariable=variable)
         entry.grid(row=row, column=1, sticky="ew", padx=8)
-        variable.trace_add("write", lambda *_: self.refresh_buttons())
-        ttk.Button(frame, text="Browse…", command=command).grid(row=row, column=2)
+        # A confirmation covers these exact inputs, however they were changed.
+        variable.trace_add("write", lambda *_: self.inputs_changed())
+        browse = ttk.Button(frame, text="Browse…", command=command)
+        browse.grid(row=row, column=2)
+        self.input_widgets += [entry, browse]
 
     def choose_movie(self) -> None:
         path = filedialog.askopenfilename(title="Choose the movie", filetypes=MOVIE_TYPES)
@@ -151,6 +206,18 @@ class App:
         path = filedialog.askopenfilename(title="Choose the photo", filetypes=PHOTO_TYPES)
         if path:
             self.photo.set(path)
+
+    def inputs_changed(self) -> None:
+        # Consent was given for specific files, so new files need it again.
+        self.consent.set(False)
+        self.forget_character()
+
+    def forget_character(self) -> None:
+        self.candidates = []
+        self.character = 0
+        self.confirmed = False
+        self.confirmed_job = None
+        self.refresh_buttons()
 
     def choose_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -164,10 +231,15 @@ class App:
 
     def refresh_buttons(self) -> None:
         running = self.process is not None
+        # A running job's results belong to the inputs it started with.
+        for widget in self.input_widgets:
+            widget.state(["disabled" if running else "!disabled"])
         ready = all(v.get().strip() for v in (self.movie, self.photo, self.output))
-        self.start_button.state(
-            ["!disabled" if ready and self.consent.get() and not running else "disabled"]
-        )
+        can_run = ready and self.consent.get() and not running
+        self.scan_button.state(["!disabled" if can_run else "disabled"])
+        # A long swap starts only after a character was confirmed or named by time.
+        chosen = self.confirmed or self.character_time.get().strip()
+        self.start_button.state(["!disabled" if can_run and chosen else "disabled"])
         self.cancel_button.state(["!disabled" if running else "disabled"])
         has_result = self.result is not None and not running
         self.open_button.state(["!disabled" if has_result else "disabled"])
@@ -179,7 +251,13 @@ class App:
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def scan(self) -> None:
+        self.run_job(scan_only=True)
+
     def start(self) -> None:
+        self.run_job(scan_only=False)
+
+    def run_job(self, scan_only: bool) -> None:
         video = Path(self.movie.get().strip())
         face = Path(self.photo.get().strip())
         output = Path(self.output.get().strip())
@@ -195,19 +273,38 @@ class App:
             except argparse.ArgumentTypeError:
                 messagebox.showerror("Face Swap", "Character time must look like 00:12:34.")
                 return
+        try:
+            # Known before the job reports it, so a very early cancel can still remove the folder.
+            job_name = job_directory(video.resolve(), face.resolve(), output.resolve(), WORKER).name
+        except OSError:
+            messagebox.showerror("Face Swap", "The movie or photo could not be read.")
+            return
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
         self.cancelled = False
+        self.scanning = scan_only
+        if scan_only:
+            self.forget_character()
+        self.progress["value"] = 0
         self.last_error = None
         self.result = None
+        self.job_name = job_name
         self.pending_output = output
         self.scratch_before = set(output.parent.glob(".face-replace-*"))
         self.started = time.monotonic()
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
             self.process = subprocess.Popen(
-                build_command(video, face, output, character_time),
+                build_command(
+                    video,
+                    face,
+                    output,
+                    character_time,
+                    self.character,
+                    scan_only,
+                    self.confirmed_job,
+                ),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -226,6 +323,7 @@ class App:
 
     def read_output(self, process: subprocess.Popen) -> None:
         for line in process.stdout:
+            self.job_name = parse_job(line) or self.job_name
             self.lines.put(line)
         process.stdout.close()
         self.lines.put(None)
@@ -240,9 +338,15 @@ class App:
             if line is None:
                 finished = True
                 break
+            candidates = parse_candidates(line)
+            if candidates is not None:
+                self.candidates = candidates
             shown = display_line(line)
             if shown:
                 self.append_log(shown)
+                percent = parse_percent(shown)
+                if percent is not None:
+                    self.progress["value"] = percent
                 if shown.startswith("error: "):
                     self.last_error = shown.removeprefix("error: ")
         if self.process is not None:
@@ -256,18 +360,84 @@ class App:
         elapsed = format_elapsed(time.monotonic() - self.started)
         self.process = None
         self.keep_awake(False)
-        self.consent.set(False)
         if self.cancelled:
-            self.remove_scratch()
-            self.status.set("Cancelled.")
+            self.consent.set(False)
+            if messagebox.askyesno("Face Swap", "Keep progress so this job can resume later?"):
+                self.status.set("Cancelled. Press Scan or Start swap to resume.")
+            else:
+                removed = self.remove_scratch()
+                self.forget_character()
+                self.status.set(
+                    "Cancelled and progress removed."
+                    if removed
+                    else "Cancelled, but a .face-replace-job folder could not be deleted. "
+                    "Delete it by hand."
+                )
+        elif code == 0 and self.scanning:
+            self.status.set(f"Scan finished in {elapsed}.")
+            self.confirm_character()
         elif code == 0:
+            self.consent.set(False)
+            self.forget_character()
+            self.progress["value"] = 100
             self.result = self.pending_output
             self.status.set(f"Done in {elapsed}.")
             messagebox.showinfo("Face Swap", f"Finished in {elapsed}.\n\n{self.result}")
         else:
+            self.consent.set(False)
+            message = self.last_error or "The job failed."
+            if (self.pending_output.parent / str(self.job_name)).exists():
+                message += f"\n\nProgress, including private media, stays in {self.job_name}."
             self.status.set("Stopped with an error.")
-            messagebox.showerror("Face Swap", self.last_error or "The job failed.")
+            messagebox.showerror("Face Swap", message)
         self.refresh_buttons()
+
+    def confirm_character(self) -> None:
+        """Show each candidate so the owner confirms who is replaced before the long swap."""
+        if not self.candidates:
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Confirm the character")
+        dialog.transient(self.root)
+        index = tk.IntVar(value=0)
+        picture = ttk.Label(dialog)
+        picture.grid(row=0, column=0, columnspan=3, padx=8, pady=8)
+        caption = ttk.Label(dialog)
+        caption.grid(row=1, column=0, columnspan=3)
+
+        def show() -> None:
+            candidate = self.candidates[index.get()]
+            image = tk.PhotoImage(
+                master=dialog, file=self.pending_output.parent / candidate["preview"]
+            )
+            scale = max(1, image.width() // 640 + 1)
+            picture.image = image.subsample(scale, scale)
+            picture.configure(image=picture.image)
+            caption.configure(
+                text=f"Character {index.get() + 1} of {len(self.candidates)}: seen in "
+                f"{candidate['appearances']} samples, shown at {candidate['time']}. "
+                "The green box marks the face to replace."
+            )
+
+        def next_candidate() -> None:
+            index.set((index.get() + 1) % len(self.candidates))
+            show()
+
+        def use_this() -> None:
+            self.character = index.get()
+            self.confirmed = True
+            self.confirmed_job = self.job_name
+            self.character_time.set("")
+            self.status.set(f"Character {index.get() + 1} confirmed. Press Start swap.")
+            dialog.destroy()
+            self.refresh_buttons()
+
+        ttk.Button(dialog, text="Next character", command=next_candidate).grid(row=2, column=0)
+        ttk.Button(dialog, text="Replace this one", command=use_this).grid(row=2, column=1)
+        show()
+        # Nothing else in the window may change while a character is being confirmed.
+        dialog.wait_visibility()
+        dialog.grab_set()
 
     def cancel(self) -> None:
         if self.process is None:
@@ -282,14 +452,24 @@ class App:
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
         else:
-            self.process.kill()
+            # The job ends its worker on this signal; a hard kill would leave the worker running.
+            self.process.terminate()
 
-    def remove_scratch(self) -> None:
-        # A killed job cannot clean up after itself; only folders from this run are removed.
-        for scratch in (
-            set(self.pending_output.parent.glob(".face-replace-*")) - self.scratch_before
-        ):
-            shutil.rmtree(scratch, ignore_errors=True)
+    def remove_scratch(self) -> bool:
+        # A killed job cannot clean up after itself; only this run's folders are removed.
+        parent = self.pending_output.parent
+        scratch = set(parent.glob(".face-replace-*")) - self.scratch_before
+        if self.job_name:
+            scratch.add(parent / self.job_name)
+        removed = True
+        for folder in scratch:
+            try:
+                shutil.rmtree(folder)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                removed = False
+        return removed
 
     def keep_awake(self, active: bool) -> None:
         # A long job dies if the laptop sleeps part way through.
@@ -311,7 +491,12 @@ class App:
                 return
             self.cancel()
             self.process.wait()
-            self.remove_scratch()
+            if not messagebox.askyesno("Face Swap", "Keep progress so this job can resume later?"):
+                if not self.remove_scratch():
+                    messagebox.showwarning(
+                        "Face Swap",
+                        "A .face-replace-job folder could not be deleted. Delete it by hand.",
+                    )
             self.keep_awake(False)
         self.root.destroy()
 

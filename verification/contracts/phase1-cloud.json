@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "task_id": "phase1-cloud",
+  "goal": "Phase 1 of docs/SPEC.md: milestones C0-C5 on the rented GPU server, covering repeatable setup, stable runs, character confirmation, resume, long-job features and a 15-second real-film test.",
+  "acceptance": "Required gates pass. Scan and pick choose one character, and a swap in the window needs a confirmed character or a named time. Jobs run in resumable segments and reuse work only for unchanged inputs. Disk check, specific errors and refusal of CPU fallback hold. Consent, screening of every frame, the AI-ALTERED label and fail-closed publishing are unweakened. Server results are recorded in the docs and cannot be re-run in review, so judge whether the docs claim only what was measured. C0's model download did not complete from a clean folder and must be reported as partly met. Results on the RTX 4050 and full-length movies are NOT_VERIFIED, by owner decision, and do not block this task.",
+  "boundaries": [
+    "Follow the project review checklist in docs/REVIEWER.md",
+    "Review the whole working-tree diff against base_commit, including untracked files",
+    "Never edit files, commit or run face inference during review"
+  ],
+  "base_commit": "0b07468",
+  "approved_paths": [
+    "src/**",
+    "tests/**",
+    "scripts/**",
+    "docs/**",
+    "verification/contracts/**",
+    "README.md",
+    "pyproject.toml",
+    "FaceSwap.bat"
+  ],
+  "budgets": {
+    "max_attempts": 3,
+    "max_total_seconds": 1500,
+    "reviewer_timeout_seconds": 1200
+  },
+  "gates": [
+    {
+      "id": "unit-tests",
+      "level": "unit",
+      "command": [
+        ".venv-gpu\\Scripts\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests"
+      ],
+      "timeout_seconds": 240
+    },
+    {
+      "id": "ruff-check",
+      "level": "static",
+      "command": [
+        ".venv-gpu\\Scripts\\ruff.exe",
+        "check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "id": "ruff-format",
+      "level": "static",
+      "command": [
+        ".venv-gpu\\Scripts\\ruff.exe",
+        "format",
+        "--check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "timeout_seconds": 60
+    }
+  ]
+}
