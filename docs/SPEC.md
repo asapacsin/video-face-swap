@@ -1,13 +1,18 @@
 # Face Swap App — product spec
 
-Status date: 2026-11-01. This spec defines the product and its delivery order. It replaces the
+Status date: 2026-11-02. This spec defines the product and its delivery order. It replaces the
 delivery sequence in [PROJECT_PLAN.md](PROJECT_PLAN.md). Safety rules remain as in
 [PRIVACY_AND_CONSENT.md](PRIVACY_AND_CONSENT.md).
 
 ## Goal
 
 A Windows desktop app where the owner picks a movie and a photo, clicks once, and later gets a
-720p MP4 of that movie with the photo's face on one chosen character.
+720p MP4 of that movie with the photo's face on one chosen character, **rendered properly** as
+defined in [Rendering quality](#rendering-quality). A run that finishes but fails those checks is a
+failed run.
+
+**Build rule:** reuse FaceFusion, FFmpeg, existing libraries and community practice wherever they
+fit. Write custom code only when nothing existing does the job or the safety rules require it.
 
 ## Where work runs
 
@@ -73,6 +78,47 @@ reference frame stays numbered against the whole movie, so the character stays t
 segments. Resuming reuses finished segments only if the movie, photo, character and app version
 are unchanged. A segment refused by screening stays refused.
 
+## Rendering quality
+
+"Rendered properly" means every check below passes on the output. Thresholds marked *proposed* are
+calibrated on the 15-second film clip first, and the owner confirms them before they become pass
+marks.
+
+**File and timing (automatic, every run):**
+
+| ID | Requirement | How it is checked |
+|---|---|---|
+| R1 | The MP4 decodes from start to end with no errors | FFmpeg full decode with `-xerror` (already built) |
+| R2 | Same frame count, frame rate and 720p size as the converted movie, never upscaled | FFprobe comparison (already built) |
+| R3 | Audio stays in sync: duration within one frame of the source, and the audio and video start together | FFprobe stream start times and durations; today only duration is checked, within 0.25 s |
+| R4 | The `AI-ALTERED` label is visible on every frame and in the metadata | Label drawn by FFmpeg (built); a check that reads the label region on sampled frames is missing |
+
+**Face replacement (automatic, using FaceFusion's own face detector and recogniser):**
+
+| ID | Requirement | How it is checked |
+|---|---|---|
+| R5 | Coverage: in frames where the chosen character is visible, the face is replaced | Share of those frames whose face now matches the photo. *Proposed:* at least 95% |
+| R6 | Likeness: replaced faces resemble the photo | Recogniser distance between each replaced face and the photo, below FaceFusion's own matching limit (0.3) on at least 90% of replaced frames (*proposed*) |
+| R7 | Nobody else changes | Faces of other people match the source frame. *Proposed:* no other person's face matches the photo in any sampled frame |
+| R8 | Background untouched | Outside the replaced face boxes, sampled frames differ from the source only by encoding noise |
+
+**Look (owner's judgement on a contact sheet and short clips):**
+
+| ID | Requirement | How it is checked |
+|---|---|---|
+| R9 | No visible seams, boxes, colour patches or blurred blocks around the face | The app writes a contact sheet of frames every 30 seconds, plus three 10-second clips with the character on screen, and the owner rates them |
+| R10 | No flicker or jumping between the photo's face and the original in a continuous shot | Owner watches the 10-second clips; R5's per-frame results show any gaps |
+| R11 | Hard cases are reported, not hidden: side profiles, partly covered faces, dark scenes and small faces | The report lists frames where R5 or R6 failed, with times, so the owner can see where it struggles |
+
+**Render report:** each finished job writes a short report beside the result, listing R1–R8
+results, the contact sheet and the hard-case times. The face checks reuse FaceFusion's detector and
+recogniser and run on the GPU after the swap, on frames sampled every second (*proposed*), so they
+add minutes, not hours. The report holds times and scores only, never face images beyond the
+contact sheet the owner opens.
+
+Not measured yet: none of R4–R11 has been checked on a real run. The 15-second film clip was
+checked by eye on sampled frames only.
+
 ## Performance and stability
 
 | ID | Requirement | Cloud (phase 1) | RTX 4050 (phase 2) |
@@ -124,6 +170,7 @@ Each milestone ends with its tests and an independent review through `scripts/re
 | C3 | Resume (F9) | A job killed mid-swap resumes and gives a valid result with matching frame count and audio |
 | C4 | Long-job features (F7, F10, F11) | Estimated time, disk check and specific errors are each tested; the window shows them, tested with a fake worker |
 | C5 | Real-film proof (P3) | A 15-second clip of a real film, with several people and a scene change, finishes with speed, VRAM and cost recorded. By owner decision, phase 1 does not run a full movie; the full-length proof is phase 2's final acceptance |
+| C6 | Render check (R1–R11) | The render report is built from FaceFusion's detector and recogniser, the thresholds are calibrated on the 15-second film clip and confirmed by the owner, and that clip passes R1–R11 |
 
 Status on 2026-11-01. Evidence is in place for C1–C5, but none has passed independent review, so no
 milestone is complete:
@@ -156,7 +203,7 @@ The project passes only when all of these have recorded evidence on the RTX 4050
 1. A full-length movie, which the owner is allowed to use, runs from the window to a finished 720p
    MP4 within the P4 limit.
 2. The result opens in a normal player, with audio in sync and the label visible.
-3. Sampled frames across the movie show the chosen character replaced and others untouched.
+3. The movie passes every rendering-quality check, R1–R11, and the owner accepts its render report.
 4. A job interrupted partway resumes and finishes correctly.
 5. All tests pass, and the review returns exit code 0 on the exact commit.
 
@@ -168,5 +215,4 @@ Cloud results, short clips and fake-worker tests do not count as evidence for it
 - **Limits:** confirm the 24-hour limit and 85°C pause before phase 2.
 - **Test movie:** for L2, provide a full-length, non-explicit movie you are allowed to use, with a
   photo of someone who has agreed.
-- **Reviewer:** update and sign in to the Claude CLI, as described in [REVIEWER.md](REVIEWER.md).
-  Until then no milestone can complete its independent review.
+- **Render thresholds:** confirm the proposed pass marks in R5–R7 once they are calibrated.
