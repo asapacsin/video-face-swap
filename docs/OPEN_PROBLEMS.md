@@ -1,9 +1,23 @@
 # Outstanding work
 
+- **Phase 1 has not passed independent review.** The final review (2026-11-02) returned REWORK, and
+  this work was committed unreviewed at the owner's request. Open findings:
+  - The unit-test gate hit its 240 s limit during the review (about 200 s in a separate run);
+    cause unknown, either slowness or a hang in the window tests.
+  - If writing the character preview fails after the MP4 is published, the run reports failure and
+    keeps the job folder.
+  - A corrupt swapped segment or labeled result is reported as an unreadable source movie (exit 2).
+  - No test starts a real worker and confirms SIGTERM or SIGHUP ends it, so that is unmeasured.
+  - Joining many segments with audio is tested only on 2 segments; drift over a full film is
+    unmeasured.
+  - `.gitignore` is outside the contract's approved paths, and the contract's short `base_commit`
+    fails the full-SHA check in `governance.py`.
+  - The 6093 MiB measurement is not tied to a commit; the worker code is unchanged since that run.
+  - docs/SPEC.md still says the reviewer needs the CLI signed in.
 - **Correction rounds beyond the limit.** AGENTS.md allows three. The owner approved more in chat on
   2026-11-02, which the repository cannot show; the contract was not changed.
 - **Stopping with a hard kill.** SIGKILL cannot be caught, so it can still leave a worker running on
-  Linux. SIGTERM and SIGHUP end it.
+  Linux. SIGTERM and SIGHUP should end it, but no test runs a real worker.
 - **Nothing is proven on the RTX 4050 since the fixes.** Segments and resume have only run on the
   server, and serial screening has run on the laptop only on a 10.8-second clip. Phase 2 repeats
   stability, VRAM and speed tests on Windows, and
