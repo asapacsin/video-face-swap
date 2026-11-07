@@ -1,8 +1,10 @@
 # Face Swap App — product spec
 
-Status date: 2026-11-02. This spec defines the product and its delivery order. It replaces the
-delivery sequence in [PROJECT_PLAN.md](PROJECT_PLAN.md). Safety rules remain as in
-[PRIVACY_AND_CONSENT.md](PRIVACY_AND_CONSENT.md).
+Status date: 2026-11-07. This spec defines the target release and replaces the previous
+product spec and the delivery sequence in [PROJECT_PLAN.md](PROJECT_PLAN.md). The target
+release removes automated content screening. The current build still screens inputs.
+Use and privacy requirements are in [PRIVACY_AND_CONSENT.md](PRIVACY_AND_CONSENT.md).
+Its runtime screening requirements describe the current build.
 
 ## Goal
 
@@ -11,8 +13,9 @@ A Windows desktop app where the owner picks a movie and a photo, clicks once, an
 defined in [Rendering quality](#rendering-quality). A run that finishes but fails those checks is a
 failed run.
 
-**Build rule:** reuse FaceFusion, FFmpeg, existing libraries and community practice wherever they
-fit. Write custom code only when nothing existing does the job or the safety rules require it.
+Reuse FFmpeg and existing libraries where they meet the requirements. Select a supported local
+GPU backend that meets [F12](#conversion-without-automated-screening), and leave upstream safety
+code intact.
 
 ## Where work runs
 
@@ -45,7 +48,7 @@ fit. Write custom code only when nothing existing does the job or the safety rul
 1. Double-click `FaceSwap.bat`.
 2. Choose the movie and the photo.
 3. Tick the consent confirmation.
-4. Press **Scan**. The app converts the movie, screens it, and shows the character it chose.
+4. Press **Scan**. The app prepares the movie, finds candidate characters, and shows the default.
 5. Confirm that character, or choose another.
 6. Press **Start**. The laptop can run unattended, overnight if needed.
 7. Open the finished MP4 from the app. If the job was interrupted, reopen the app and resume it.
@@ -71,12 +74,35 @@ current code on the 4050.
 | F9 | Save progress and resume after a crash, power loss or cancel | Tested for segments: a real job killed after segment 1 of 2 resumed. Scan-checkpoint resume has CPU unit tests only; power loss not tested |
 | F10 | Refuse to start without enough free disk space | Comparison tested with fake workers; the estimate comes from a CPU encode of the film clip, not a measured job |
 | F11 | Show a specific error when a job stops | Partial: real pipeline failures not all exercised |
+| F12 | Run the GUI and CLI without automated content screening | Missing: the current worker and backend still screen inputs |
 
-**F9 design:** process the 720p movie in segments of about 5 minutes using FaceFusion's frame-trim
-options. Record screening and swap progress per segment, then join the segments at the end. The
-reference frame stays numbered against the whole movie, so the character stays the same across
-segments. Resuming reuses finished segments only if the movie, photo, character and app version
-are unchanged. A segment refused by screening stays refused.
+**F9 design** — Process the 720p movie in segments of about 5 minutes. Record character search
+and completed swap progress, then join the segments at the end. Keep the reference frame
+numbered against the whole movie. Reuse completed segments only when the movie, photo, character,
+and app and backend versions match. Give the new pipeline a separate job state version so jobs
+from the old pipeline start fresh. Preserve old job files and published outputs.
+
+### Conversion without automated screening
+
+- The Windows app and the Windows and Linux CLI perform no automated explicit-content
+  classification on the movie or reference photo. This applies to setup, startup and model
+  checks, **Scan**, character selection by time or index, **Start swap**, every segment,
+  retries, resume, and publishing. **Scan** finds characters. The release has no screening
+  mode or screening bypass setting.
+- The pinned FaceFusion headless backend screens internally. Choose a supported local backend
+  that meets F12 and the existing GPU and rendering requirements. If no suitable backend is
+  available, F12 cannot ship. Check applicable software and model terms before selecting it.
+- Setup and preflight require only the models needed by the chosen pipeline. The release runs
+  without `nsfw_1`, `nsfw_2`, and `nsfw_3` and does not load those models from an old cache.
+  Help, dry-run output, progress, and errors reflect media preparation, character selection,
+  and rendering.
+- Verify F12 on a clean install without screening weights, including GUI and CLI scan and
+  swap, selection by index and time, retry, resume, and backend preflight. Instrument the
+  run to detect any explicit-content classifier call or load of a screening weight. Check
+  invalid input and failed jobs publish no output. Re-measure driver stability, peak VRAM,
+  and throughput with the selected backend.
+- If the original refusal can be reproduced on independently verified, authorized,
+  non-explicit inputs, use those inputs to verify the new release completes the same job.
 
 ## Rendering quality
 
@@ -93,12 +119,12 @@ marks.
 | R3 | Audio stays in sync: duration within one frame of the source, and the audio and video start together | FFprobe stream start times and durations; today only duration is checked, within 0.25 s |
 | R4 | The `AI-ALTERED` label is visible on every frame and in the metadata | Label drawn by FFmpeg (built); a check that reads the label region on sampled frames is missing |
 
-**Face replacement (automatic, using FaceFusion's own face detector and recogniser):**
+**Face replacement (automatic, using the selected face detector and recogniser)**
 
 | ID | Requirement | How it is checked |
 |---|---|---|
 | R5 | Coverage: in frames where the chosen character is visible, the face is replaced | Share of those frames whose face now matches the photo. *Proposed:* at least 95% |
-| R6 | Likeness: replaced faces resemble the photo | Recogniser distance between each replaced face and the photo, below FaceFusion's own matching limit (0.3) on at least 90% of replaced frames (*proposed*) |
+| R6 | Likeness: replaced faces resemble the photo | Recogniser distance below a matching limit calibrated for the selected recogniser on at least 90% of replaced frames (*proposed*). The previous FaceFusion limit was 0.3 |
 | R7 | Nobody else changes | Faces of other people match the source frame. *Proposed:* no other person's face matches the photo in any sampled frame |
 | R8 | Background untouched | Outside the replaced face boxes, sampled frames differ from the source only by encoding noise |
 
@@ -111,7 +137,7 @@ marks.
 | R11 | Hard cases are reported, not hidden: side profiles, partly covered faces, dark scenes and small faces | The report lists frames where R5 or R6 failed, with times, so the owner can see where it struggles |
 
 **Render report:** each finished job writes a short report beside the result, listing R1–R8
-results, the contact sheet and the hard-case times. The face checks reuse FaceFusion's detector and
+results, the contact sheet and the hard-case times. The face checks reuse the selected detector and
 recogniser and run on the GPU after the swap, on frames sampled every second (*proposed*), so they
 add minutes, not hours. The report holds times and scores only, never face images beyond the
 contact sheet the owner opens.
@@ -120,6 +146,8 @@ Not measured yet: none of R4–R11 has been checked on a real run. The 15-second
 checked by eye on sampled frames only.
 
 ## Performance and stability
+
+The recorded measurements below are from the previous backend. F12 requires fresh measurements.
 
 | ID | Requirement | Cloud (phase 1) | RTX 4050 (phase 2) |
 |---|---|---|---|
@@ -133,18 +161,17 @@ checked by eye on sampled frames only.
 P4's 24-hour limit and P5's 85°C are proposed targets. See [BENCHMARKS.md](BENCHMARKS.md) for the
 measurements. What sets the remaining 6093 MiB peak was not measured, so phase 2 must test what the 4050 needs.
 
-## Safety requirements
+## Consent, privacy, and output requirements
 
-These stay in force everywhere and cannot be turned off.
-
-- Consent is confirmed for each job.
-- The photo and every movie frame are screened using FaceFusion's unchanged safety code. One
-  refused frame stops the job, and some movies will therefore not process.
-- If screening cannot run, the job does not run.
+- Consent is confirmed for each job. The operator affirms adult consent and permission to use
+  both inputs and that the inputs are non-explicit. The CLI rejects `--content-rating explicit`.
+- In managed use, an authorized reviewer verifies rights, adult consent, and permitted content
+  before releasing the inputs to the operator. This is separate from conversion. An operator's
+  declaration alone cannot verify those facts.
 - Every output has a visible `AI-ALTERED` label and metadata.
 - Nothing is overwritten. A failed check publishes no output.
-- A refusal is final: its media is removed, and every-frame screening has CPU unit tests. No real
-  frame has been refused in a recorded run.
+- Remove temporary media when a job finishes or is discarded. Preserve resumable work only
+  where the job can be retried or the user chooses to keep progress.
 - No analytics or online face services. In phase 2, media stays on the laptop.
 - Logs and errors hold no credentials or personal media.
 - Some models are non-commercial or research-licensed, so output is for personal use only until
@@ -170,7 +197,7 @@ Each milestone ends with its tests and an independent review through `scripts/re
 | C3 | Resume (F9) | A job killed mid-swap resumes and gives a valid result with matching frame count and audio |
 | C4 | Long-job features (F7, F10, F11) | Estimated time, disk check and specific errors are each tested; the window shows them, tested with a fake worker |
 | C5 | Real-film proof (P3) | A 15-second clip of a real film, with several people and a scene change, finishes with speed, VRAM and cost recorded. By owner decision, phase 1 does not run a full movie; the full-length proof is phase 2's final acceptance |
-| C6 | Render check (R1–R11) | The render report is built from FaceFusion's detector and recogniser, the thresholds are calibrated on the 15-second film clip and confirmed by the owner, and that clip passes R1–R11 |
+| C6 | Render check (R1–R11) | The render report is built from the selected detector and recogniser, the thresholds are calibrated on the 15-second film clip and confirmed by the owner, and that clip passes R1–R11 |
 
 Status on 2026-11-01. Evidence is in place for C1–C5, but none has passed independent review, so no
 milestone is complete:
@@ -205,7 +232,9 @@ The project passes only when all of these have recorded evidence on the RTX 4050
 2. The result opens in a normal player, with audio in sync and the label visible.
 3. The movie passes every rendering-quality check, R1–R11, and the owner accepts its render report.
 4. A job interrupted partway resumes and finishes correctly.
-5. All tests pass, and the review returns exit code 0 on the exact commit.
+5. F12 passes on the supported entry points. The GUI run and the CLI smoke checks use the new
+   backend with no screening weights installed.
+6. All tests pass, and the review returns exit code 0 on the exact commit.
 
 Cloud results, short clips and fake-worker tests do not count as evidence for items 1–4.
 

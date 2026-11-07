@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task_id": "rewrite-product-spec",
+  "goal": "Replace the abandoned automated-screening requirement in the canonical product spec.",
+  "acceptance": "The canonical product spec defines a target release without automated content screening on any supported entry point. It distinguishes the target from the current release and retains consent, output labeling, audio, GPU, and final acceptance requirements.",
+  "boundaries": [
+    "Documentation only. Review docs/SPEC.md and this milestone. The removal proposal and its milestone were already present before this task.",
+    "Preserve runtime, upstream safety code, existing verification contracts, gates, and tests. No inference, downloads, or GPU rental."
+  ],
+  "base_commit": "e8826a889c10f933e2c1ca7006723106a8c65e0d",
+  "approved_paths": ["docs/SPEC.md", "verification/contracts/rewrite-product-spec.json"],
+  "budgets": {
+    "max_attempts": 1,
+    "max_total_seconds": 180,
+    "reviewer_timeout_seconds": 145
+  },
+  "gates": [
+    {
+      "id": "git-diff-check",
+      "level": "static",
+      "command": ["git", "diff", "--check", "HEAD"],
+      "timeout_seconds": 20
+    }
+  ]
+}
