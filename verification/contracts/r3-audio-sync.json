@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "task_id": "r3-audio-sync",
+  "goal": "Implement spec requirement R3: a published output keeps its duration and audio-to-video start offset within one frame of the source.",
+  "acceptance": "probe() records video and first-audio stream start times. Output validation refuses to publish when duration differs from the source by more than one frame, or when the audio-to-video start offset differs from the source's by more than one frame, or when the source has audio and the output's start time is missing. Silent sources are checked on duration only. Unit tests cover each case and all existing tests still pass. SPEC.md R3 states only what was tested. Real films and GPU runs are NOT_VERIFIED.",
+  "boundaries": [
+    "Follow the project review checklist in docs/REVIEWER.md",
+    "Review the whole working-tree diff against base_commit, including untracked files",
+    "No change to consent, screening, labeling or upstream safety code",
+    "Never edit files, commit or run face inference during review"
+  ],
+  "base_commit": "d76ddce559a936458374498f5c7b581542d97a6c",
+  "approved_paths": [
+    "src/face_replace/__main__.py",
+    "src/face_replace/pipeline.py",
+    "tests/test_timing.py",
+    "docs/SPEC.md",
+    "verification/contracts/r3-audio-sync.json"
+  ],
+  "budgets": {
+    "max_attempts": 3,
+    "max_total_seconds": 1500,
+    "reviewer_timeout_seconds": 1200
+  },
+  "gates": [
+    {
+      "id": "unit-tests",
+      "level": "unit",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests"
+      ],
+      "timeout_seconds": 240
+    },
+    {
+      "id": "ruff-check",
+      "level": "static",
+      "command": [
+        "ruff",
+        "check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "timeout_seconds": 60
+    },
+    {
+      "id": "ruff-format",
+      "level": "static",
+      "command": [
+        "ruff",
+        "format",
+        "--check",
+        "src",
+        "tests",
+        "scripts"
+      ],
+      "timeout_seconds": 60
+    }
+  ]
+}

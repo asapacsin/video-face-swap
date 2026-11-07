@@ -211,6 +211,20 @@ def _check_disk(directory: Path, duration: float, job: Path) -> None:
         )
 
 
+def _timing_matches(result: dict, source: dict, frame: float) -> bool:
+    """R3: duration within one frame, and the audio offset from video kept within one frame."""
+    if abs(result["duration_seconds"] - source["duration_seconds"]) > frame:
+        return False
+    if not source["audio_streams"]:
+        return True
+    # A source with audio must have every start time, or the sync check fails closed.
+    starts = ("audio_start", "video_start")
+    if any(media.get(key) is None for media in (result, source) for key in starts):
+        return False
+    offset = result["audio_start"] - result["video_start"]
+    return abs(offset - (source["audio_start"] - source["video_start"])) <= frame
+
+
 def _probe_backend(path: Path, kind: str) -> dict:
     """Media the app made itself is a processing failure, not bad input, when unreadable."""
     try:
@@ -483,8 +497,8 @@ def _run_job(
         timeout,
     )
     result = _probe_backend(candidate, "generated output")
-    if abs(result["duration_seconds"] - source["duration_seconds"]) > max(0.25, float(1 / fps)):
-        raise PipelineError("generated output duration differs from source")
+    if not _timing_matches(result, source, float(1 / fps)):
+        raise PipelineError("generated output duration or audio sync differs from source")
     if result["frame_rate"] != source["frame_rate"]:
         raise PipelineError("generated output timing or audio validation failed")
     if result["audio_streams"] != source["audio_streams"]:

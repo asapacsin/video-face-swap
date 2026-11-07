@@ -116,7 +116,7 @@ marks.
 |---|---|---|
 | R1 | The MP4 decodes from start to end with no errors | FFmpeg full decode with `-xerror` (already built) |
 | R2 | Same frame count, frame rate and 720p size as the converted movie, never upscaled | FFprobe comparison (already built) |
-| R3 | Audio stays in sync: duration within one frame of the source, and the audio and video start together | FFprobe stream start times and durations; today only duration is checked, within 0.25 s |
+| R3 | Audio stays in sync: duration within one frame of the source, and the audio and video start together | FFprobe stream start times and durations: the output's duration and its audio-to-video start offset each match the converted 720p copy within one frame, or no output is published; a missing start time on media with audio also stops publishing. The conversion from the original movie to that copy is not yet compared. Unit and fake-worker tests only; no real film measured |
 | R4 | The `AI-ALTERED` label is visible on every frame and in the metadata | Label drawn by FFmpeg (built); a check that reads the label region on sampled frames is missing |
 
 **Face replacement (automatic, using the selected face detector and recogniser)**

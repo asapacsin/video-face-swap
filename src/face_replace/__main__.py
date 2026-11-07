@@ -67,6 +67,7 @@ def probe(path: Path, kind: str) -> dict:
             raise ValueError
     except (ValueError, ZeroDivisionError) as exc:
         raise InputError("source video must have positive duration and frame rate") from exc
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
     return {
         "width": video["width"],
         "height": video["height"],
@@ -74,7 +75,18 @@ def probe(path: Path, kind: str) -> dict:
         "duration_seconds": duration,
         "audio_streams": sum(s.get("codec_type") == "audio" for s in streams),
         "video_frames": int(video.get("nb_read_packets", 0)),
+        "video_start": _start_time(video),
+        "audio_start": _start_time(audio),
     }
+
+
+def _start_time(stream: dict | None) -> float | None:
+    """Stream start in seconds, or None when the stream or its start time is absent."""
+    try:
+        value = float(stream["start_time"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
 
 
 def clock_seconds(value: str) -> float:
