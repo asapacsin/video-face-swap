@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "task_id": "f12-local-backend",
+  "goal": "Implement SPEC.md F12 with a local GPU backend that runs without automated content screening.",
+  "acceptance": "The CLI and GUI use the local GHOST backend for scan, pick, swap, retry, and resume. No explicit-content classifier or screening weight is invoked. The app retains explicit operator consent and non-explicit attestations, non-overwrite and failure behavior, 720p output, first audio track, original timing, visible AI-ALTERED labeling, GPU-only inference, and compatible fresh job state. Actual CUDA CLI and GUI scan/conversion runs on synthetic AI-generated adult-face media verify frame count/rate, retained audio, visible label, metadata, and a localized face-region pixel change beyond source-video encoding noise. ONNX Runtime session creation is instrumented to allow only the five pinned models and requires CUDA for every session; content-screening modules must remain unloaded. Unit tests cover index/time selection, retry/resume orchestration, and retention of progress after a failed CUDA setup retry. A failed conversion publishes no output. No real-person media is authorized or required. GPU retry/resume success, clean-install behavior, real-person identity quality, long-video stability, Linux behavior, and other untested levels remain NOT_VERIFIED.",
+  "owner_approval": "The owner explicitly requested removal of automated content supervision from conversion and authorized implementing the replacement backend. The owner approved downloading GHOST and CrossFace weights for personal non-commercial research, directed use of synthetic media only, and authorized revising docs/REVIEWER.md and F12 acceptance criteria to match the no-screening scope. Upstream FaceFusion source remains untouched.",
+  "boundaries": [
+    "Follow docs/SPEC.md F12 and acceptance criteria",
+    "Preserve upstream-facefusion at its pinned, clean revision. Implement the owner-approved no-screening requirement in the separate backend without modifying upstream source.",
+    "No GPU rental, model download, face-processing service, or use of personal media without explicit approval of exact assets, size, cost, and reason.",
+    "Keep generated media, model files, credentials, and private paths out of Git and logs.",
+    "Update the F12 checklist and acceptance only as explicitly authorized by the owner; do not weaken unrelated contracts, tests, requirements, or review gates."
+  ],
+  "base_commit": "03bc8f0e68c2d10df647f9ce0ab35ac9925198e6",
+  "approved_paths": [
+    "src/**",
+    "scripts/**",
+    "tests/**",
+    "docs/**",
+    "verification/contracts/f12-local-backend.json",
+    "README.md",
+    "pyproject.toml",
+    "FaceSwap.bat"
+  ],
+  "budgets": {
+    "max_attempts": 3,
+    "max_total_seconds": 3600,
+    "reviewer_timeout_seconds": 900
+  },
+  "gates": [
+    {
+      "id": "unit-tests",
+      "level": "unit",
+      "command": [".venv-gpu\\Scripts\\python.exe", "-m", "unittest", "discover", "-s", "tests"],
+      "timeout_seconds": 600
+    },
+    {
+      "id": "synthetic-gpu-smoke",
+      "level": "device",
+      "command": [".venv-gpu\\Scripts\\python.exe", "scripts\\f12_synthetic_smoke.py"],
+      "timeout_seconds": 600
+    },
+    {
+      "id": "ruff-check",
+      "level": "static",
+      "command": [".venv-gpu\\Scripts\\ruff.exe", "check", "src", "tests", "scripts"],
+      "timeout_seconds": 60
+    },
+    {
+      "id": "ruff-format",
+      "level": "static",
+      "command": [".venv-gpu\\Scripts\\ruff.exe", "format", "--check", "src", "tests", "scripts"],
+      "timeout_seconds": 60
+    }
+  ]
+}

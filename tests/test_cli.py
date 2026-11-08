@@ -1,6 +1,5 @@
 import argparse
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -15,15 +14,6 @@ from unittest.mock import patch
 
 from face_replace.__main__ import InputError, clock_seconds, main, probe
 from face_replace.pipeline import PipelineError, run_pipeline
-
-
-def load_worker_module():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "facefusion_worker.py"
-    spec = importlib.util.spec_from_file_location("facefusion_worker", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
 
 FAKE_WORKER = """
 import json, subprocess, sys
@@ -42,6 +32,8 @@ if args["--mode"] == "swap":
     trim = f"trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", args["--video"], "-vf", trim, "-an",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", args["--output"]], check=True)
+    json.dump({"done": True, "processed_frames": int(end) - int(start),
+               "matched_frames": int(end) - int(start)}, open(args["--state"], "w"))
     open(args["--work"] + "/swaps.log", "a").write(start + "\\n")
 """
 
@@ -145,6 +137,14 @@ class CLITest(unittest.TestCase):
             self.assertEqual(self.run_cli(self.args() + ["--content-rating", "explicit"])[0], 2)
             mock.assert_not_called()
 
+    def test_real_job_requires_non_explicit_rating_before_probe(self):
+        args = [x for x in self.args() if x != "--dry-run"]
+        with patch("face_replace.__main__.probe") as mock:
+            code, _, error = self.run_cli(args)
+        self.assertEqual(code, 2)
+        self.assertIn("--content-rating non-explicit", error)
+        mock.assert_not_called()
+
     def test_missing_video(self):
         args = self.args()
         args[1] = str(self.root / "missing.mp4")
@@ -194,15 +194,18 @@ class CLITest(unittest.TestCase):
                 probe(self.video, "source video")
 
     def test_pipeline_failure_returns_3_with_message(self):
+        args = [x for x in self.args() if x != "--dry-run"]
+        args += ["--content-rating", "non-explicit"]
         with patch(
             "face_replace.pipeline.run_pipeline", side_effect=PipelineError("no target face")
         ):
-            code, _, error = self.run_cli([x for x in self.args() if x != "--dry-run"])
+            code, _, error = self.run_cli(args)
         self.assertEqual(code, 3)
         self.assertIn("no target face", error)
 
     def test_default_output_is_beside_video(self):
         args = [x for x in self.args() if x != "--dry-run"]
+        args += ["--content-rating", "non-explicit"]
         del args[4:6]
         with patch("face_replace.pipeline.run_pipeline", return_value={}) as mock:
             self.assertEqual(self.run_cli(args)[0], 0)
@@ -365,16 +368,16 @@ class CLITest(unittest.TestCase):
             for path in (movie, output, worker):
                 path.unlink(missing_ok=True)
 
-    def test_worker_refusal_message_reaches_user(self):
-        output = self.root / "refused-result.mp4"
-        worker = self.root / "refusing_worker.py"
+    def test_worker_failure_message_reaches_user(self):
+        output = self.root / "failed-result.mp4"
+        worker = self.root / "failed_worker.py"
         worker.write_text(
             "import sys\n"
-            "print('face-replace-error: video screening refused', file=sys.stderr)\n"
+            "print('face-replace-error: target face could not be selected', file=sys.stderr)\n"
             "raise SystemExit(2)\n"
         )
         try:
-            with self.assertRaisesRegex(PipelineError, "video screening refused"):
+            with self.assertRaisesRegex(PipelineError, "target face could not be selected"):
                 run_pipeline(self.video, self.face, output, worker)
             self.assertFalse(output.exists())
         finally:
@@ -447,20 +450,39 @@ class CLITest(unittest.TestCase):
             for path in (worker, other_face, other_worker):
                 path.unlink(missing_ok=True)
 
-    def test_screening_refusal_removes_its_media_and_publishes_nothing(self):
-        output = self.root / "refused-media.mp4"
-        worker = self.root / "screening_worker.py"
+    def test_final_worker_failure_removes_job_media_and_publishes_nothing(self):
+        output = self.root / "failed-media.mp4"
+        worker = self.root / "failed_worker.py"
         worker.write_text(
             "import sys\n"
-            "print('face-replace-error: video screening refused the frame', file=sys.stderr)\n"
+            "print('face-replace-error: target face could not be selected', file=sys.stderr)\n"
             "raise SystemExit(2)\n"
         )
         before = set(self.root.glob(".face-replace-job-*"))
         try:
-            with self.assertRaisesRegex(PipelineError, "screening refused"):
+            with self.assertRaisesRegex(PipelineError, "target face could not be selected"):
                 run_pipeline(self.video, self.face, output, worker)
             self.assertEqual(set(self.root.glob(".face-replace-job-*")), before)
-            self.assertFalse(output.with_name("refused-media-character.png").exists())
+            self.assertFalse(output.with_name("failed-media-character.png").exists())
+        finally:
+            worker.unlink(missing_ok=True)
+
+    def test_pipeline_refuses_to_publish_when_selected_face_never_matches(self):
+        output = self.root / "no-matched-face.mp4"
+        worker = self.root / "no_match_worker.py"
+        worker.write_text(
+            FAKE_WORKER.replace('"matched_frames": int(end) - int(start)', '"matched_frames": 0'),
+            encoding="utf-8",
+        )
+        before = set(self.root.glob(".face-replace-job-*"))
+        try:
+            with self.assertRaisesRegex(
+                PipelineError, "selected character was not found"
+            ) as caught:
+                run_pipeline(self.video, self.face, output, worker)
+            self.assertTrue(caught.exception.refused)
+            self.assertFalse(output.exists())
+            self.assertEqual(set(self.root.glob(".face-replace-job-*")), before)
         finally:
             worker.unlink(missing_ok=True)
 
@@ -547,6 +569,8 @@ class CLITest(unittest.TestCase):
             self.assertIn("--reference-frame 12", picks[0])
             self.assertIn("--reference-frame 12", swaps[0])
             self.assertIn("--reference-position 0", swaps[0])
+            self.assertIn("--frame-count 24", swaps[0])
+            self.assertIn("--frame-rate 24", swaps[0])
             self.assertEqual(preview.read_bytes(), b"picked")
         finally:
             for job in self.root.glob(".face-replace-job-*"):
@@ -580,7 +604,7 @@ class CLITest(unittest.TestCase):
         worker = self.root / "stuck_worker.py"
         worker.write_text(
             "import sys\n"
-            "print('face-replace-error: video screening refused', file=sys.stderr)\n"
+            "print('face-replace-error: target face could not be selected', file=sys.stderr)\n"
             "raise SystemExit(2)\n"
         )
         before = set(self.root.glob(".face-replace-job-*"))
@@ -703,52 +727,11 @@ class CLITest(unittest.TestCase):
                 shutil.rmtree(job)
             worker.unlink(missing_ok=True)
 
-    def test_cpu_fallback_is_forbidden_at_load(self):
-        class Session:
-            providers = ["CPUExecutionProvider"]
-            disabled = False
-
-            def __init__(self):
-                pass
-
-            def get_providers(self):
-                return self.providers
-
-            def disable_fallback(self):
-                type(self).disabled = True
-
-        load_worker_module().forbid_cpu_fallback(Session)
-        with self.assertRaises(RuntimeError):
-            Session()
-        Session.providers = ["CUDAExecutionProvider"]
-        Session()
-        self.assertTrue(Session.disabled)
-
-    def test_gpu_failures_reach_the_owner_with_their_reason(self):
+    def test_gpu_driver_failures_reach_the_owner_with_their_reason(self):
         from face_replace.pipeline import _run
 
         script = self.root / "gpu_failure.py"
-        worker = load_worker_module()
         try:
-            # Upstream catches the load failure and exits, as this script does.
-            script.write_text(
-                "import importlib.util, sys\n"
-                f"spec = importlib.util.spec_from_file_location('w', {str(worker.__file__)!r})\n"
-                "w = importlib.util.module_from_spec(spec)\n"
-                "spec.loader.exec_module(w)\n"
-                "class Session:\n"
-                "    def __init__(self): pass\n"
-                "    def get_providers(self): return ['CPUExecutionProvider']\n"
-                "w.forbid_cpu_fallback(Session)\n"
-                "try:\n"
-                "    Session()\n"
-                "except RuntimeError:\n"
-                "    raise SystemExit(1)\n",
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(PipelineError, "did not load on the GPU") as caught:
-                _run([sys.executable, str(script)], 60)
-            self.assertFalse(caught.exception.refused)
             script.write_text(
                 "import sys\n"
                 "print('RuntimeError: CUDA failure 700: Illegal address', file=sys.stderr)\n"
@@ -760,9 +743,45 @@ class CLITest(unittest.TestCase):
         finally:
             script.unlink(missing_ok=True)
 
+    def test_cuda_setup_failure_retries_once_and_preserves_job_progress(self):
+        script = self.root / "cuda_setup_failure.py"
+        count = self.root / "cuda_setup_attempts.txt"
+        output = self.root / "cuda_setup_result.mp4"
+        jobs_before = set(self.root.glob(".face-replace-job-*"))
+        try:
+            script.write_text(
+                "import pathlib, sys\n"
+                f"with pathlib.Path({str(count)!r}).open('a') as attempt_log: "
+                "attempt_log.write('attempt\\n')\n"
+                "print('face-replace-error: ghost_1_256 did not load on CUDA; ' "
+                "'CPU fallback is disabled', file=sys.stderr)\n"
+                "raise SystemExit(4)\n"
+            )
+            with self.assertRaisesRegex(
+                PipelineError, "ghost_1_256 did not load on CUDA"
+            ) as caught:
+                run_pipeline(self.video, self.face, output, script, timeout=60)
+            self.assertFalse(caught.exception.refused)
+            self.assertEqual(count.read_text(encoding="utf-8").splitlines(), ["attempt", "attempt"])
+            jobs = set(self.root.glob(".face-replace-job-*")) - jobs_before
+            self.assertEqual(len(jobs), 1)
+            job = jobs.pop()
+            self.assertTrue(job.is_dir(), f"resume job was removed: {job.name}")
+            self.assertTrue(
+                (job / "source-720p.mp4").is_file(),
+                f"resume source missing; saved files: {[path.name for path in job.iterdir()]}",
+            )
+            self.assertFalse(output.exists())
+        finally:
+            script.unlink(missing_ok=True)
+            count.unlink(missing_ok=True)
+            for job in set(self.root.glob(".face-replace-job-*")) - jobs_before:
+                shutil.rmtree(job)
+
     def test_file_errors_are_reported_without_private_paths(self):
         err = io.StringIO()
         args = ["--video", str(self.video), "--face", str(self.face), "--consent-confirmed"]
+        args += ["--content-rating", "non-explicit"]
         args += ["--output", str(self.root / "unwritable.mp4")]
         with (
             patch("face_replace.pipeline.run_pipeline", side_effect=OSError("/private/job")),
@@ -795,153 +814,10 @@ class CLITest(unittest.TestCase):
             worker.unlink(missing_ok=True)
 
 
-class Face:
-    bounding_box = (0, 0, 10, 10)
-    embedding_norm = (1.0, 0.0)
-
-
-class WorkerScanTest(unittest.TestCase):
-    """The worker's scan is the only every-frame screening, so it is tested without a GPU."""
-
-    def setUp(self):
-        self.worker = load_worker_module()
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.state = Path(self.temp.name) / "scan.json"
-
-    def run_scan(self, frames=6, total=None, refused=(), fps=0.01):
-        numpy = __import__("numpy")
-        frames_left = iter(range(frames))
-        self.screened = []
-        self.seeks = []
-
-        def analyse(frame):
-            self.screened.append(frame)
-            return frame in refused
-
-        ff = argparse.Namespace(
-            analyse_frame=analyse,
-            close_video_reader=lambda reader: None,
-            count_video_frame_total=lambda video: frames if total is None else total,
-            detect_video_fps=lambda video: fps,
-            get_reader=lambda video, name: "reader",
-            read_video_frame=lambda reader: next(frames_left, None),
-            save_preview=lambda frame, box, path: None,
-            seek_video_reader=self.seek(frames_left),
-            target_faces=lambda frame: [Face()],
-        )
-        args = argparse.Namespace(state=str(self.state), video="movie")
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            code = self.worker.scan(args, ff, numpy)
-        return code, err.getvalue()
-
-    def seek(self, frames_left):
-        def seek(reader, frame):
-            self.seeks.append(frame)
-            for _ in range(frame):
-                next(frames_left)
-
-        return seek
-
-    def test_every_frame_is_screened_and_embeddings_end_with_the_scan(self):
-        code, _ = self.run_scan()
-        self.assertEqual(code, 0)
-        self.assertEqual(self.screened, list(range(6)))
-        state = json.loads(self.state.read_text())
-        self.assertTrue(state["done"])
-        self.assertNotIn("embedding", self.state.read_text())
-        self.assertEqual(state["candidates"][0]["appearances"], 6)
-
-    def test_a_refused_frame_stops_the_job_as_a_final_refusal(self):
-        code, err = self.run_scan(refused={5})
-        self.assertEqual(code, 2)
-        self.assertIn("video screening refused", err)
-        self.assertFalse(json.loads(self.state.read_text()).get("done"))
-
-    def test_a_checkpoint_never_covers_an_unscreened_or_refused_frame(self):
-        # With a checkpoint every 3 frames, the refusal in frame 2 comes before the first save.
-        code, _ = self.run_scan(refused={2})
-        self.assertEqual(code, 2)
-        self.assertFalse(self.state.exists())
-
-    def test_resume_seeks_to_the_checkpoint_and_screens_the_rest(self):
-        self.state.write_text(
-            json.dumps(
-                {
-                    "next_frame": 3,
-                    "clusters": [
-                        {
-                            "count": 2,
-                            "area": 1.0,
-                            "frame": 0,
-                            "position": 0,
-                            "box": [0, 0, 1, 1],
-                            "embedding": [1.0, 0.0],
-                        }
-                    ],
-                }
-            )
-        )
-        code, _ = self.run_scan()
-        self.assertEqual(code, 0)
-        self.assertEqual(self.seeks, [3])
-        self.assertEqual(self.screened, [3, 4, 5])
-        self.assertEqual(json.loads(self.state.read_text())["candidates"][0]["appearances"], 5)
-
-    def test_short_decode_and_extra_frames_are_refused(self):
-        code, err = self.run_scan(frames=4, total=6)
-        self.assertEqual(code, 2)
-        self.assertIn("could not be fully decoded", err)
-        self.state.unlink(missing_ok=True)
-        code, err = self.run_scan(frames=7, total=6)
-        self.assertEqual(code, 2)
-        self.assertIn("frame count changed", err)
-
-    def test_swap_refusal_is_final_and_a_crash_can_resume(self):
-        args = argparse.Namespace(video="movie", start_frame=10, end_frame=20)
-        calls = []
-
-        def analyse(video, start, end):
-            calls.append((video, start, end))
-            return True
-
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            code = self.worker.swap(args, analyse, lambda parsed: self.fail("swapped"), {})
-        self.assertEqual(code, 2)
-        self.assertEqual(calls, [("movie", 10, 20)])
-        self.assertIn("screening refused", err.getvalue())
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(self.worker.swap(args, lambda *a: False, lambda p: 1, {}), 4)
-            self.assertEqual(self.worker.swap(args, lambda *a: False, lambda p: 0, {}), 0)
-
-    def test_screening_models_are_freed_without_changing_the_result(self):
-        for refused in (True, False):
-            calls = []
-            analyser = argparse.Namespace(
-                analyse_video=lambda *args, r=refused: calls.append(args) or r,
-                clear_inference_pool=lambda: calls.append("cleared"),
-            )
-            self.worker.free_screening_after_analysis(analyser)
-            self.assertEqual(analyser.analyse_video("movie", 1, 2), refused)
-            self.assertEqual(calls, [("movie", 1, 2), "cleared"])
-
-    def test_pick_uses_the_found_face_or_stops_without_refusing(self):
-        saved = []
-        ff = argparse.Namespace(
-            read_frame=lambda video, frame: "frame",
-            target_faces=lambda frame: [Face()],
-            save_preview=lambda frame, box, path: saved.append(frame),
-        )
-        args = argparse.Namespace(video="movie", reference_frame=7, state=str(self.state))
-        self.assertEqual(self.worker.pick(args, ff), 0)
-        state = json.loads(self.state.read_text())
-        self.assertEqual((state["frame"], state["position"], saved), (7, 0, [7]))
-        ff.target_faces = lambda frame: []
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(self.worker.pick(args, ff), 4)
-
-    def test_clock_does_not_wrap_at_24_hours(self):
-        self.assertEqual(self.worker.clock(25 * 3600 + 61), "25:01:01")
+class LegacyBackendRemovedTest(unittest.TestCase):
+    def test_screening_worker_is_not_available(self):
+        legacy_worker = Path(__file__).resolve().parents[1] / "scripts" / "facefusion_worker.py"
+        self.assertFalse(legacy_worker.exists())
 
 
 if __name__ == "__main__":

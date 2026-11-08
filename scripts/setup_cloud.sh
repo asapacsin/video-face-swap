@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Repeatable setup on a rented Ubuntu NVIDIA server with CUDA 13. Run as root from the repo root.
-# Downloads about 5 GB of packages and the 1.47 GB of approved models.
+# Repeatable setup on an Ubuntu NVIDIA GPU host with CUDA 13. Run as root from the repo root.
+# Downloads about 5 GB of packages and 725 MB of model weights.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 revision=72470819a0373be3388b3929c8f8f311f418fc3c

@@ -13,10 +13,11 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
-from face_replace.__main__ import FACEFUSION_REVISION, InputError, probe
+from face_replace import BACKEND_REVISION
+from face_replace.__main__ import InputError, probe
 
 TARGET_HEIGHT = 720
-JOB_VERSION = 1
+JOB_VERSION = 3
 SEGMENT_SECONDS = 300
 # Upper bound for each worker run; a scan covers the whole movie.
 WORKER_SECONDS_PER_VIDEO_SECOND = 30
@@ -193,7 +194,7 @@ def _label_filter() -> str:
 def job_directory(video: Path, face: Path, output: Path, worker: Path) -> Path:
     """Resume only for the same movie, photo and app code."""
     stat = video.stat()
-    identity = f"{JOB_VERSION}|{FACEFUSION_REVISION}|{video}|{stat.st_size}|{stat.st_mtime_ns}|"
+    identity = f"{JOB_VERSION}|{BACKEND_REVISION}|{video}|{stat.st_size}|{stat.st_mtime_ns}|"
     code = worker.read_bytes() + Path(__file__).read_bytes()
     key = hashlib.sha256(identity.encode() + code + face.read_bytes()).hexdigest()[:16]
     return output.parent / f".face-replace-job-{key}"
@@ -371,6 +372,8 @@ def _run_job(
 
     base = [sys.executable, str(worker), "--video", str(prepared), "--face", str(face)]
     base += ["--work", str(job), "--upstream", str(worker.parent.parent / "upstream-facefusion")]
+    base += ["--frame-count", str(source["video_frames"])]
+    base += ["--frame-rate", str(Fraction(source["frame_rate"]))]
 
     state_path = job / "scan.json"
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
@@ -416,11 +419,28 @@ def _run_job(
     segments = []
     started = time.monotonic()
     processed = 0
+    matched_frames = 0
     for number, (start, end) in enumerate(ranges, 1):
         segment = segment_dir / f"segment-{number:05}.mp4"
+        segment_state = segment_dir / f"segment-{number:05}.json"
         segments.append(segment)
         if segment.is_file():
-            continue
+            try:
+                saved = json.loads(segment_state.read_text(encoding="utf-8"))
+                valid = (
+                    saved.get("done") is True
+                    and saved.get("processed_frames") == end - start
+                    and isinstance(saved.get("matched_frames"), int)
+                    and 0 <= saved["matched_frames"] <= end - start
+                )
+            except (OSError, ValueError, TypeError):
+                valid = False
+                saved = {}
+            if valid:
+                matched_frames += saved["matched_frames"]
+                continue
+            segment.unlink(missing_ok=True)
+            segment_state.unlink(missing_ok=True)
         partial = segment_dir / f"working-{number:05}.mp4"
         _run_worker(
             [
@@ -429,6 +449,8 @@ def _run_job(
                 "swap",
                 "--output",
                 str(partial),
+                "--state",
+                str(segment_state),
                 "--reference-frame",
                 str(chosen["frame"]),
                 "--reference-position",
@@ -444,6 +466,18 @@ def _run_job(
             raise PipelineError("backend produced no output")
         if _probe_backend(partial, "swapped segment")["video_frames"] != end - start:
             raise PipelineError("swapped segment frame count differs from source")
+        try:
+            saved = json.loads(segment_state.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise PipelineError("backend did not save segment progress") from exc
+        if (
+            saved.get("done") is not True
+            or saved.get("processed_frames") != end - start
+            or not isinstance(saved.get("matched_frames"), int)
+            or not 0 <= saved["matched_frames"] <= end - start
+        ):
+            raise PipelineError("backend saved invalid segment progress")
+        matched_frames += saved["matched_frames"]
         partial.replace(segment)
         processed += 1
         left = (time.monotonic() - started) / processed * (len(ranges) - number)
@@ -451,6 +485,9 @@ def _run_job(
         left_text = f"{hours:02d}:{seconds // 60:02d}:{seconds % 60:02d}"
         percent = number / len(ranges)
         info(f"swapped segment {number}/{len(ranges)}, {percent:.1%}, {left_text} left")
+
+    if matched_frames == 0:
+        raise PipelineError("selected character was not found in the video", refused=True)
 
     intermediate = job / "swapped.mp4"
     _concat(segments, intermediate, timeout)

@@ -1,4 +1,6 @@
-# M2 CPU pipeline review — 2026-10-24
+# Historical M2 CPU pipeline review — 2026-10-24
+
+This review covers the retired FaceFusion worker and is not evidence for the GHOST backend.
 
 **Result: PASS for synthetic CPU orchestration and output handling. Overall face
 replacement and GPU inference: NOT_VERIFIED.**

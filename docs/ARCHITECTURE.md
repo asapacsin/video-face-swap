@@ -1,6 +1,18 @@
-# Decision: local CLI + pinned FaceFusion on a rented NVIDIA GPU
+# Backend decision and current verification
 
-Decision date: 2026-10-24. Scope: milestone 1 preparation. The Python standard-library
+## Owner-directed update — 2026-11-08
+
+The owner explicitly requested removing automated content supervision from conversion and
+authorized implementing F12. The active application uses a separate local GHOST worker, not
+FaceFusion's headless workflow or content-analysis path. `upstream-facefusion` remains pinned
+and unmodified. This replaces the M2 screening decision below for the active application.
+Synthetic end-to-end CLI and GUI conversions passed on the local RTX 4050. Real-person identity
+quality, retry/resume on GPU and other untested cases remain unverified. See
+[F12_LOCAL_GPU_SMOKE.md](F12_LOCAL_GPU_SMOKE.md).
+
+## Historical M1 backend decision — 2026-10-24
+
+Scope: milestone 1 preparation. The Python standard-library
 CLI validates consent and inspects local files with FFprobe. No backend is imported
 in dry-run. Future inference will be a subprocess adapter to the pinned FaceFusion
 headless CLI, followed by FFmpeg labeling, audio remuxing and output verification.

@@ -1,5 +1,5 @@
 # Prerequisites: Git, Python 3.12 (py launcher), FFmpeg on PATH, NVIDIA driver with CUDA 12 support.
-# Repeatable. Downloads about 3.5 GB of packages and, with -Models, 1.47 GB of approved weights.
+# Repeatable. Downloads about 3.5 GB of packages and, with -Models, 725 MB of model weights.
 param([switch]$Models)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot

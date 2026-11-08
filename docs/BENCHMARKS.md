@@ -1,4 +1,9 @@
-# Benchmark status: clips measured on the server and the 4050; full-length movies NOT_VERIFIED
+# Historical benchmark: retired FaceFusion + HyperSwap backend
+
+These runs describe the previous backend and are not performance or quality evidence for GHOST.
+The current GPU evidence includes synthetic end-to-end CLI and GUI conversions on the RTX 4050,
+documented in [F12_LOCAL_GPU_SMOKE.md](F12_LOCAL_GPU_SMOKE.md). Real-person identity quality,
+long-video conversion, and throughput remain NOT_VERIFIED.
 
 All runs use FaceFusion 7247081 and hyperswap_1a_256.
 

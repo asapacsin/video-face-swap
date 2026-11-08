@@ -1,5 +1,18 @@
 # Outstanding work
 
+## Current GHOST backend — 2026-11-08
+
+- F12 routes through GHOST and now has a synthetic end-to-end RTX 4050 conversion with an
+  AI-generated fictional face, audio, exact frame count, timing, metadata, and visible label.
+  Synthetic CLI and GUI scan/swap paths passed. No real-person media was authorized, so
+  real-media identity, R4–R11 quality, full-length stability, cross-platform behavior,
+  performance, and GPU retry/resume remain unverified.
+- The owner has authorized revising F12 review criteria to permit the local backend without
+  automated screening, with synthetic-only GPU evidence. An independent review of the revised
+  criteria and current tree is still required before this milestone can be called complete.
+
+The entries below document previous milestones and do not describe the active backend.
+
 - **Phase 1 has not passed independent review.** The final review (2026-11-02) returned REWORK, and
   this work was committed unreviewed at the owner's request. Open findings:
   - The unit-test gate hit its 240 s limit during the review. Timed per module, nothing hangs:

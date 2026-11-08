@@ -1,4 +1,5 @@
 {
+  "status": "historical; describes the retired FaceFusion screening worker, not the active F12 backend",
   "task_id": "m2-cpu-pipeline",
   "goal": "Implement and verify the local pipeline, bounded FaceFusion worker and output handling without GPU spending or model downloads",
   "acceptance": ["Fixed pinned FaceFusion worker disables downloads and preserves upstream safety", "Both inputs screened; ambiguous face selection refused", "CPU fake-worker pipeline labels output, retains audio, validates media and atomically publishes", "Failures/timeouts clean temporary work and do not publish partial output", "Independent review evidence recorded"],

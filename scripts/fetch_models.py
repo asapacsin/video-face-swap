@@ -10,21 +10,11 @@ import urllib.request
 import zlib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from face_replace.models import MODEL_RELEASES as MODELS
+from face_replace.models import MODEL_SHA256 as EXPECTED_SHA256
+
 BASE = "https://github.com/facefusion/facefusion-assets/releases/download"
-MODELS = {
-    "nsfw_1": "models-3.3.0",
-    "nsfw_2": "models-3.3.0",
-    "nsfw_3": "models-3.3.0",
-    "fairface": "models-3.0.0",
-    "yoloface_8n": "models-3.0.0",
-    "2dfan4": "models-3.0.0",
-    "fan_68_5": "models-3.0.0",
-    "xseg_1": "models-3.1.0",
-    "bisenet_resnet_34": "models-3.0.0",
-    "arcface_w600k_r50": "models-3.0.0",
-    "kim_vocal_2": "models-3.0.0",
-    "hyperswap_1a_256": "models-3.3.0",
-}
 
 
 def fetch(url: str, path: Path) -> None:
@@ -58,10 +48,14 @@ def fetch(url: str, path: Path) -> None:
             time.sleep(5 * stalled)
 
 
-def verified(model: Path, expected_crc: Path) -> bool:
+def verified(model: Path, expected_crc: Path, expected_sha256: str) -> bool:
     if not model.is_file() or not expected_crc.is_file():
         return False
-    return format(zlib.crc32(model.read_bytes()), "08x") == expected_crc.read_text().strip()
+    data = model.read_bytes()
+    return (
+        format(zlib.crc32(data), "08x") == expected_crc.read_text().strip()
+        and hashlib.sha256(data).hexdigest() == expected_sha256
+    )
 
 
 def main() -> int:
@@ -70,11 +64,11 @@ def main() -> int:
     report = {}
     for name, release in MODELS.items():
         model, expected_crc = target / f"{name}.onnx", target / f"{name}.hash"
-        if not verified(model, expected_crc):
+        if not verified(model, expected_crc, EXPECTED_SHA256[name]):
             print(f"downloading {name}", file=sys.stderr)
             fetch(f"{BASE}/{release}/{name}.hash", expected_crc)
             fetch(f"{BASE}/{release}/{name}.onnx", model)
-        if not verified(model, expected_crc):
+        if not verified(model, expected_crc, EXPECTED_SHA256[name]):
             print(f"checksum mismatch for {name}", file=sys.stderr)
             return 1
         data = model.read_bytes()

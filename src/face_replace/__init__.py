@@ -1,4 +1,6 @@
-"""Consent-gated 720p movie face replacement around a pinned FaceFusion worker."""
+"""Consent-gated 720p movie face replacement."""
+
+from face_replace.models import BACKEND_REVISION as BACKEND_REVISION
+from face_replace.models import FACEFUSION_REVISION as FACEFUSION_REVISION
 
 __version__ = "0.1.0"
-FACEFUSION_REVISION = "72470819a0373be3388b3929c8f8f311f418fc3c"

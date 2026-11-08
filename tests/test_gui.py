@@ -20,17 +20,102 @@ class GuiHelpersTest(unittest.TestCase):
     def test_command_carries_inputs_and_optional_character_time(self):
         from face_replace.gui import build_command
 
-        command = build_command(Path("m.mkv"), Path("p.jpg"), Path("o.mp4"))
+        command = build_command(
+            Path("m.mkv"), Path("p.jpg"), Path("o.mp4"), content_rating_confirmed=True
+        )
         self.assertIn("--consent-confirmed", command)
+        self.assertEqual(command[command.index("--content-rating") + 1], "non-explicit")
         self.assertNotIn("--character-time", command)
         self.assertEqual(command[command.index("--video") + 1], "m.mkv")
         timed = build_command(Path("m.mkv"), Path("p.jpg"), Path("o.mp4"), "00:12:34")
         self.assertEqual(timed[timed.index("--character-time") + 1], "00:12:34")
+        unconfirmed = build_command(Path("m.mkv"), Path("p.jpg"), Path("o.mp4"))
+        self.assertNotIn("--content-rating", unconfirmed)
+
+    def test_non_explicit_attestation_is_required_for_gui_jobs(self):
+        import tkinter as tk
+        from unittest import mock
+
+        from face_replace import gui
+
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        self.addCleanup(root.destroy)
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            video, photo, output = (folder / name for name in ("m.mp4", "p.jpg", "o.mp4"))
+            video.write_bytes(b"movie")
+            photo.write_bytes(b"photo")
+            app = gui.App(root)
+            self.addCleanup(app.stop_polling)
+            app.movie.set(str(video))
+            app.photo.set(str(photo))
+            app.output.set(str(output))
+            app.consent.set(True)
+            app.refresh_buttons()
+            self.assertTrue(app.scan_button.instate(["disabled"]))
+            with mock.patch.object(gui.subprocess, "Popen") as popen:
+                app.run_job(scan_only=True)
+                popen.assert_not_called()
+
+            app.non_explicit_confirmed.set(True)
+            app.refresh_buttons()
+            self.assertFalse(app.scan_button.instate(["disabled"]))
+            app.character_time.set("00:00:01")
+            self.assertFalse(app.start_button.instate(["disabled"]))
+            app.inputs_changed()
+            self.assertFalse(app.consent.get())
+            self.assertFalse(app.non_explicit_confirmed.get())
+
+    def test_built_scan_pick_and_swap_commands_pass_real_cli_validation(self):
+        import contextlib
+        import io
+        from unittest import mock
+
+        from face_replace import gui
+        from face_replace.__main__ import main
+
+        common = (Path("m.mkv"), Path("p.jpg"), Path("o.mp4"))
+        cases = (
+            ({"scan_only": True, "content_rating_confirmed": True}, {"scan_only": True}),
+            (
+                {"character": 1, "confirmed_job": "job-1", "content_rating_confirmed": True},
+                {"character": 1},
+            ),
+            (
+                {"character_time": "00:00:05", "content_rating_confirmed": True},
+                {"character_time": 5.0},
+            ),
+        )
+        for options, expected in cases:
+            with self.subTest(options=options):
+                command = gui.build_command(*common, **options)
+                with (
+                    mock.patch("face_replace.__main__.probe", return_value={}),
+                    mock.patch(
+                        "face_replace.pipeline.run_pipeline", return_value={"status": "created"}
+                    ) as run,
+                    mock.patch("face_replace.__main__.stop_workers_on_signals"),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(main(command[3:]), 0)
+                self.assertEqual(
+                    run.call_args.kwargs["scan_only"], expected.get("scan_only", False)
+                )
+                if "character" in expected:
+                    self.assertEqual(run.call_args.kwargs["character"], expected["character"])
+                    self.assertEqual(run.call_args.kwargs["confirmed_job"], "job-1")
+                if "character_time" in expected:
+                    self.assertEqual(
+                        run.call_args.kwargs["character_time"], expected["character_time"]
+                    )
 
     def test_only_status_and_error_lines_are_shown(self):
         from face_replace.gui import display_line
 
-        self.assertEqual(display_line("face-replace: screening 4.0%\n"), "screening 4.0%")
+        self.assertEqual(display_line("face-replace: scanning 4.0%\n"), "scanning 4.0%")
         self.assertEqual(display_line("error: no target face\n"), "error: no target face")
         self.assertIsNone(display_line('  "output": "D:\\\\private\\\\result.mp4",\n'))
 
@@ -101,10 +186,12 @@ class GuiHelpersTest(unittest.TestCase):
                 mock.patch.object(gui.messagebox, "showinfo"),
             ):
                 app = gui.App(root)
+                self.addCleanup(app.stop_polling)
                 app.movie.set(str(movie))
                 app.photo.set(str(photo))
                 app.output.set(str(folder / "o.mp4"))
                 app.consent.set(True)
+                app.non_explicit_confirmed.set(True)
                 app.refresh_buttons()
                 self.assertTrue(app.start_button.instate(["disabled"]))
 
@@ -148,11 +235,14 @@ class GuiHelpersTest(unittest.TestCase):
                 )
                 self.assertNotIn("--scan-only", commands[-1])
                 self.assertEqual(app.progress["value"], 100)
+                self.assertFalse(app.consent.get())
+                self.assertFalse(app.non_explicit_confirmed.get())
                 self.assertIn("left", app.log.get("1.0", "end"))
                 self.assertTrue(app.start_button.instate(["disabled"]))
 
                 # Any changed input, even typed, needs a new confirmation.
                 app.consent.set(True)
+                app.non_explicit_confirmed.set(True)
                 run(app.scan)
                 dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
                 self.assertEqual(dialog.grab_current(), dialog)
@@ -195,6 +285,7 @@ class GuiHelpersTest(unittest.TestCase):
                 mock.patch.object(gui.messagebox, "showerror") as showerror,
             ):
                 app = gui.App(root)
+                self.addCleanup(app.stop_polling)
                 app.movie.set(str(movie))
                 app.photo.set(str(photo))
                 app.output.set(str(folder / "o.mp4"))
@@ -202,6 +293,7 @@ class GuiHelpersTest(unittest.TestCase):
                     if kept:
                         job_dir.mkdir()
                     app.consent.set(True)
+                    app.non_explicit_confirmed.set(True)
                     app.run_job(scan_only=True)
                     deadline = time.monotonic() + 30
                     while app.process is not None and time.monotonic() < deadline:
@@ -211,6 +303,7 @@ class GuiHelpersTest(unittest.TestCase):
                     self.assertIn("not enough free disk space", message)
                     self.assertEqual("private media" in message, kept)
                     self.assertFalse(app.consent.get())
+                    self.assertFalse(app.non_explicit_confirmed.get())
 
     def test_cancel_or_close_removing_progress_deletes_a_scanned_job(self):
         import tkinter as tk
@@ -242,16 +335,19 @@ class GuiHelpersTest(unittest.TestCase):
                 mock.patch.object(gui.messagebox, "askyesno", return_value=False),
             ):
                 app = gui.App(root)
+                self.addCleanup(app.stop_polling)
                 app.movie.set(str(movie))
                 app.photo.set(str(photo))
                 app.output.set(str(folder / "o.mp4"))
                 app.consent.set(True)
+                app.non_explicit_confirmed.set(True)
 
                 def start_job():
                     # The folder exists before the run, as it does after a scan.
                     job_dir.mkdir()
                     (job_dir / "source-720p.mp4").write_bytes(b"media")
                     app.consent.set(True)
+                    app.non_explicit_confirmed.set(True)
                     app.run_job(scan_only=False)
                     deadline = time.monotonic() + 30
                     while app.job_name != job_dir.name and time.monotonic() < deadline:
@@ -269,6 +365,7 @@ class GuiHelpersTest(unittest.TestCase):
                 self.assertIn("removed", app.status.get())
                 # A cancelled job needs consent again before it runs.
                 self.assertFalse(app.consent.get())
+                self.assertFalse(app.non_explicit_confirmed.get())
 
                 # A folder that cannot be deleted is reported, not called removed.
                 start_job()
@@ -289,6 +386,7 @@ class GuiHelpersTest(unittest.TestCase):
                 (resumed / "source-720p.mp4").write_bytes(b"media")
                 job.write_text("import time\ntime.sleep(60)\n")
                 app.consent.set(True)
+                app.non_explicit_confirmed.set(True)
                 app.run_job(scan_only=False)
                 app.cancel()
                 deadline = time.monotonic() + 30

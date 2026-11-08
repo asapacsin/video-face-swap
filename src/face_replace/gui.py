@@ -22,10 +22,11 @@ MOVIE_TYPES = [("Movies", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts"), ("All fi
 PHOTO_TYPES = [("Photos", "*.jpg *.jpeg *.png *.webp")]
 CONSENT_TEXT = (
     "I confirm everyone whose identity is used is an adult and has agreed to this use. "
-    "The movie and photo are non-explicit and I am allowed to use them. "
+    "I am allowed to use these files. "
     "The result is not for impersonation, deception or harassment."
 )
-WORKER = Path(__file__).resolve().parents[2] / "scripts" / "facefusion_worker.py"
+CONTENT_RATING_TEXT = "I confirm the movie and reference photo are non-explicit."
+WORKER = Path(__file__).resolve().parents[2] / "scripts" / "ghost_worker.py"
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
 
@@ -48,6 +49,7 @@ def build_command(
     character: int = 0,
     scan_only: bool = False,
     confirmed_job: str | None = None,
+    content_rating_confirmed: bool = False,
 ) -> list[str]:
     # pythonw has no console, so the job itself runs under the matching python.exe.
     python = Path(sys.executable)
@@ -56,6 +58,8 @@ def build_command(
     command = [str(python), "-m", "face_replace"]
     command += ["--video", str(video), "--face", str(face), "--output", str(output)]
     command += ["--consent-confirmed"]
+    if content_rating_confirmed:
+        command += ["--content-rating", "non-explicit"]
     if character_time:
         command += ["--character-time", character_time]
     else:
@@ -116,12 +120,14 @@ class App:
         self.confirmed = False
         self.confirmed_job = None
         self.job_name = None
+        self.poll_after_id = None
         self.lines = queue.Queue()
         self.movie = tk.StringVar()
         self.photo = tk.StringVar()
         self.output = tk.StringVar()
         self.character_time = tk.StringVar()
         self.consent = tk.BooleanVar()
+        self.non_explicit_confirmed = tk.BooleanVar()
         self.status = tk.StringVar(value="Choose a movie and a photo.")
         self.input_widgets = []
 
@@ -135,7 +141,7 @@ class App:
         frame = ttk.Frame(root, padding=12)
         frame.grid(sticky="nsew")
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(7, weight=1)
+        frame.rowconfigure(8, weight=1)
 
         self.add_file_row(frame, 0, "Movie", self.movie, self.choose_movie)
         self.add_file_row(frame, 1, "Photo", self.photo, self.choose_photo)
@@ -158,9 +164,15 @@ class App:
         ttk.Checkbutton(
             frame, text=CONSENT_TEXT, variable=self.consent, command=self.refresh_buttons
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 6))
+        ttk.Checkbutton(
+            frame,
+            text=CONTENT_RATING_TEXT,
+            variable=self.non_explicit_confirmed,
+            command=self.refresh_buttons,
+        ).grid(row=6, column=0, columnspan=3, sticky="w")
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, columnspan=3, sticky="w", pady=6)
+        buttons.grid(row=7, column=0, columnspan=3, sticky="w", pady=6)
         self.scan_button = ttk.Button(buttons, text="Scan", command=self.scan)
         self.start_button = ttk.Button(buttons, text="Start swap", command=self.start)
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel)
@@ -178,13 +190,13 @@ class App:
             button.grid(row=0, column=column, padx=(0, 6))
 
         self.log = tk.Text(frame, height=10, wrap="word", state="disabled")
-        self.log.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=6)
+        self.log.grid(row=8, column=0, columnspan=3, sticky="nsew", pady=6)
         self.progress = ttk.Progressbar(frame, maximum=100)
-        self.progress.grid(row=8, column=0, columnspan=3, sticky="ew")
-        ttk.Label(frame, textvariable=self.status).grid(row=9, column=0, columnspan=3, sticky="w")
+        self.progress.grid(row=9, column=0, columnspan=3, sticky="ew")
+        ttk.Label(frame, textvariable=self.status).grid(row=10, column=0, columnspan=3, sticky="w")
 
         self.refresh_buttons()
-        self.root.after(200, self.poll)
+        self.poll_after_id = self.root.after(200, self.poll)
 
     def add_file_row(self, frame, row, label, variable, command) -> None:
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
@@ -210,6 +222,7 @@ class App:
     def inputs_changed(self) -> None:
         # Consent was given for specific files, so new files need it again.
         self.consent.set(False)
+        self.non_explicit_confirmed.set(False)
         self.forget_character()
 
     def forget_character(self) -> None:
@@ -235,7 +248,7 @@ class App:
         for widget in self.input_widgets:
             widget.state(["disabled" if running else "!disabled"])
         ready = all(v.get().strip() for v in (self.movie, self.photo, self.output))
-        can_run = ready and self.consent.get() and not running
+        can_run = ready and self.consent.get() and self.non_explicit_confirmed.get() and not running
         self.scan_button.state(["!disabled" if can_run else "disabled"])
         # A long swap starts only after a character was confirmed or named by time.
         chosen = self.confirmed or self.character_time.get().strip()
@@ -262,7 +275,7 @@ class App:
         face = Path(self.photo.get().strip())
         output = Path(self.output.get().strip())
         character_time = self.character_time.get().strip()
-        if not self.consent.get():
+        if not self.consent.get() or not self.non_explicit_confirmed.get():
             return
         if not video.is_file() or not face.is_file():
             messagebox.showerror("Face Swap", "Choose an existing movie and photo.")
@@ -304,6 +317,7 @@ class App:
                     self.character,
                     scan_only,
                     self.confirmed_job,
+                    content_rating_confirmed=self.non_explicit_confirmed.get(),
                 ),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -329,6 +343,7 @@ class App:
         self.lines.put(None)
 
     def poll(self) -> None:
+        self.poll_after_id = None
         finished = False
         while True:
             try:
@@ -353,7 +368,15 @@ class App:
             self.status.set(f"Running… {format_elapsed(time.monotonic() - self.started)}")
         if finished:
             self.finish()
-        self.root.after(200, self.poll)
+        self.poll_after_id = self.root.after(200, self.poll)
+
+    def stop_polling(self) -> None:
+        if self.poll_after_id is not None:
+            try:
+                self.root.after_cancel(self.poll_after_id)
+            except tk.TclError:
+                pass
+            self.poll_after_id = None
 
     def finish(self) -> None:
         code = self.process.wait()
@@ -362,6 +385,7 @@ class App:
         self.keep_awake(False)
         if self.cancelled:
             self.consent.set(False)
+            self.non_explicit_confirmed.set(False)
             if messagebox.askyesno("Face Swap", "Keep progress so this job can resume later?"):
                 self.status.set("Cancelled. Press Scan or Start swap to resume.")
             else:
@@ -378,6 +402,7 @@ class App:
             self.confirm_character()
         elif code == 0:
             self.consent.set(False)
+            self.non_explicit_confirmed.set(False)
             self.forget_character()
             self.progress["value"] = 100
             self.result = self.pending_output
@@ -385,6 +410,7 @@ class App:
             messagebox.showinfo("Face Swap", f"Finished in {elapsed}.\n\n{self.result}")
         else:
             self.consent.set(False)
+            self.non_explicit_confirmed.set(False)
             message = self.last_error or "The job failed."
             if (self.pending_output.parent / str(self.job_name)).exists():
                 message += f"\n\nProgress, including private media, stays in {self.job_name}."
@@ -498,6 +524,7 @@ class App:
                         "A .face-replace-job folder could not be deleted. Delete it by hand.",
                     )
             self.keep_awake(False)
+        self.stop_polling()
         self.root.destroy()
 
 

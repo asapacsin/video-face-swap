@@ -10,7 +10,7 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
-from face_replace import FACEFUSION_REVISION
+from face_replace import BACKEND_REVISION
 
 # Long enough to read through a full-length movie file on a slow disk.
 PROBE_TIMEOUT_SECONDS = 600
@@ -125,12 +125,12 @@ def parser() -> argparse.ArgumentParser:
         "--content-rating",
         choices=["unknown", "non-explicit", "explicit"],
         default="unknown",
-        help="Operator assessment; never substitutes for safety checks",
+        help="For real jobs, attest inputs are non-explicit; known explicit content is refused",
     )
     p.add_argument(
         "--scan-only",
         action="store_true",
-        help="Convert and screen the movie, list its characters, then stop before swapping",
+        help="Find characters in the movie and stop before swapping",
     )
     p.add_argument(
         "--character",
@@ -164,6 +164,8 @@ def main(argv=None) -> int:
             raise InputError("affirmative --consent-confirmed attestation is required")
         if args.content_rating == "explicit":
             raise InputError("known explicit content is refused")
+        if not args.dry_run and args.content_rating != "non-explicit":
+            raise InputError("real jobs require --content-rating non-explicit")
         default_output = args.video.with_name(f"{args.video.stem}-swapped-720p.mp4")
         output = (args.output or default_output).resolve()
         if output in {args.video.resolve(), args.face.resolve()}:
@@ -177,7 +179,7 @@ def main(argv=None) -> int:
         print(
             "Inspecting local media; inference is disabled."
             if args.dry_run
-            else "Validating media and starting the pinned FaceFusion worker.",
+            else "Validating media and starting the local GPU worker.",
             file=sys.stderr,
         )
         source = probe(args.video, "source video")
@@ -188,7 +190,7 @@ def main(argv=None) -> int:
             stop_workers_on_signals()
             try:
                 project_root = Path(__file__).resolve().parents[2]
-                worker = project_root / "scripts" / "facefusion_worker.py"
+                worker = project_root / "scripts" / "ghost_worker.py"
                 result = run_pipeline(
                     args.video,
                     args.face,
@@ -219,12 +221,12 @@ def main(argv=None) -> int:
             json.dumps(
                 {
                     "mode": "dry-run",
-                    "backend": "FaceFusion",
-                    "revision": FACEFUSION_REVISION,
+                    "backend": "GHOST",
+                    "revision": BACKEND_REVISION,
                     "execution_target": "local or rented NVIDIA GPU (not contacted)",
                     "source": source,
                     "reference": reference,
-                    "safety_screening": "NOT_RUN; dry-run is not content approval",
+                    "automated_content_screening": "NOT_USED",
                     "planned_output": {
                         "container": "mp4",
                         "max_height": 720,

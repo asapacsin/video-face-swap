@@ -1,0 +1,75 @@
+{
+  "cli": {
+    "command": [
+      "python -m face_replace",
+      "--video movie.mp4",
+      "--face reference.png",
+      "--output cli.mp4",
+      "--consent-confirmed",
+      "--content-rating non-explicit",
+      "--character 0"
+    ],
+    "media": {
+      "audio_start": 0.0,
+      "audio_streams": 1,
+      "face_region_delta": {
+        "control_pixels_changed_over_30": 0.01104,
+        "face_pixels_changed_over_30": 0.06347222222222222
+      },
+      "frame_rate": "24000/1001",
+      "height": 720,
+      "metadata_comment": "AI-ALTERED face replacement",
+      "video_frames": 119,
+      "video_start": 0.0,
+      "visible_label": "AI-ALTERED overlay source-comparison pixel check passed",
+      "visible_label_pixel_delta": {
+        "new_dark_pixels": 1454,
+        "new_light_pixels": 586
+      },
+      "width": 1280
+    },
+    "output_sha256": "f2a80155e63057f59192f1a668e2b6ee423b8fe0ae26107f49ab66064def2e0f",
+    "worker_audit": [
+      "audited CUDA inference sessions: yoloface_8n.onnx, fan_68_5.onnx, arcface_w600k_r50.onnx, ghost_1_256.onnx, crossface_ghost.onnx",
+      "content-screening modules: not imported"
+    ]
+  },
+  "evidence_scope": "synthetic-only; no real-person media",
+  "fixture_sha256": {
+    "movie.mp4": "33d0e847dd49683978dac2604d36f493c5ae823574f5203220bc637c44edaef4",
+    "reference.png": "6deb6a8ca665a1dd761036342eb0cbfe12c8147bff35c9a39396e073310531c0",
+    "target.png": "4fde9ce3ec119340e66d512bd25fdebb49c70febf657249ea1937fa1c508bbd0"
+  },
+  "gui": {
+    "actions": [
+      "scan",
+      "select first detected character",
+      "swap"
+    ],
+    "media": {
+      "audio_start": 0.0,
+      "audio_streams": 1,
+      "face_region_delta": {
+        "control_pixels_changed_over_30": 0.01104,
+        "face_pixels_changed_over_30": 0.06340277777777778
+      },
+      "frame_rate": "24000/1001",
+      "height": 720,
+      "metadata_comment": "AI-ALTERED face replacement",
+      "video_frames": 119,
+      "video_start": 0.0,
+      "visible_label": "AI-ALTERED overlay source-comparison pixel check passed",
+      "visible_label_pixel_delta": {
+        "new_dark_pixels": 1454,
+        "new_light_pixels": 586
+      },
+      "width": 1280
+    },
+    "output_sha256": "6fad77389fcb54d43e87b881b0cb656567bb9703a1a6c4106d08b6f4daa3640f",
+    "worker_audit": [
+      "audited CUDA inference sessions: yoloface_8n.onnx, fan_68_5.onnx, arcface_w600k_r50.onnx, ghost_1_256.onnx, crossface_ghost.onnx",
+      "content-screening modules: not imported"
+    ]
+  },
+  "output_hash_note": "H.264 output hashes are run-specific and may differ across runs."
+}

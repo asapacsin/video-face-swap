@@ -1,6 +1,8 @@
+import hashlib
 import importlib.util
 import tempfile
 import unittest
+import zlib
 from io import BytesIO
 from pathlib import Path
 from unittest import mock
@@ -72,6 +74,17 @@ class FetchTest(unittest.TestCase):
         data, ranges = self.fetch([TimeoutError() for _ in range(5)])
         self.assertIsNone(data)
         self.assertEqual(len(ranges), 5)
+
+    def test_verified_requires_pinned_sha256_in_addition_to_crc(self):
+        with tempfile.TemporaryDirectory() as temp:
+            model = Path(temp) / "model.onnx"
+            crc = Path(temp) / "model.hash"
+            data = b"test model bytes"
+            model.write_bytes(data)
+            crc.write_text(format(zlib.crc32(data), "08x"))
+            expected = hashlib.sha256(data).hexdigest()
+            self.assertTrue(fetch_models.verified(model, crc, expected))
+            self.assertFalse(fetch_models.verified(model, crc, "0" * 64))
 
 
 if __name__ == "__main__":

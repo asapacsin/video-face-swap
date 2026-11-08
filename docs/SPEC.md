@@ -1,10 +1,10 @@
 # Face Swap App — product spec
 
-Status date: 2026-11-07. This spec defines the target release and replaces the previous
-product spec and the delivery sequence in [PROJECT_PLAN.md](PROJECT_PLAN.md). The target
-release removes automated content screening. The current build still screens inputs.
-Use and privacy requirements are in [PRIVACY_AND_CONSENT.md](PRIVACY_AND_CONSENT.md).
-Its runtime screening requirements describe the current build.
+Status date: 2026-11-08. This spec defines the target release and replaces the previous
+product spec and the delivery sequence in [PROJECT_PLAN.md](PROJECT_PLAN.md). The active
+GUI and CLI now route jobs to the local GHOST backend without automated content screening.
+The backend implementation and end-to-end output remain partially verified. Use and privacy
+requirements are in [PRIVACY_AND_CONSENT.md](PRIVACY_AND_CONSENT.md).
 
 ## Goal
 
@@ -74,7 +74,7 @@ current code on the 4050.
 | F9 | Save progress and resume after a crash, power loss or cancel | Tested for segments: a real job killed after segment 1 of 2 resumed. Scan-checkpoint resume has CPU unit tests only; power loss not tested |
 | F10 | Refuse to start without enough free disk space | Comparison tested with fake workers; the estimate comes from a CPU encode of the film clip, not a measured job |
 | F11 | Show a specific error when a job stops | Partial: real pipeline failures not all exercised |
-| F12 | Run the GUI and CLI without automated content screening | Missing: the current worker and backend still screen inputs |
+| F12 | Run the GUI and CLI without automated content screening | Partial: synthetic CLI and GUI GPU conversions passed; retry/resume GPU, clean-install model audit, Linux and full-length behavior remain unverified |
 
 **F9 design** — Process the 720p movie in segments of about 5 minutes. Record character search
 and completed swap progress, then join the segments at the end. Keep the reference frame
@@ -89,20 +89,25 @@ from the old pipeline start fresh. Preserve old job files and published outputs.
   checks, **Scan**, character selection by time or index, **Start swap**, every segment,
   retries, resume, and publishing. **Scan** finds characters. The release has no screening
   mode or screening bypass setting.
-- The pinned FaceFusion headless backend screens internally. Choose a supported local backend
-  that meets F12 and the existing GPU and rendering requirements. If no suitable backend is
-  available, F12 cannot ship. Check applicable software and model terms before selecting it.
+- The pinned FaceFusion headless backend remains unchanged. The active application routes to
+  a separate local GHOST worker that does not use its screening workflow. Synthetic GPU output
+  has passed through the CLI and GUI; real-person identity quality remains unverified. Check
+  applicable software and model terms before distribution or use beyond personal non-commercial
+  research.
 - Setup and preflight require only the models needed by the chosen pipeline. The release runs
   without `nsfw_1`, `nsfw_2`, and `nsfw_3` and does not load those models from an old cache.
   Help, dry-run output, progress, and errors reflect media preparation, character selection,
   and rendering.
-- Verify F12 on a clean install without screening weights, including GUI and CLI scan and
-  swap, selection by index and time, retry, resume, and backend preflight. Instrument the
-  run to detect any explicit-content classifier call or load of a screening weight. Check
-  invalid input and failed jobs publish no output. Re-measure driver stability, peak VRAM,
-  and throughput with the selected backend.
-- If the original refusal can be reproduced on independently verified, authorized,
-  non-explicit inputs, use those inputs to verify the new release completes the same job.
+- Real CLI jobs require `--content-rating non-explicit` in addition to the existing consent
+  attestation; dry runs remain available with an unknown rating. This is an operator assertion,
+  not automated screening or proof of the input's contents.
+- Verify F12 using synthetic, AI-generated adult-face fixtures only; do not use real-person
+  media. Run actual CUDA CLI and GUI scans and conversions and verify frame count, rate, retained
+  audio, output label and metadata. Instrument ONNX Runtime to allow only the pinned GHOST,
+  CrossFace, detector, landmark and recognition models, and assert screening modules are never
+  imported. Unit tests cover index/time selection, retry and resume orchestration. Clean-install
+  behavior, GPU retry/resume, Linux, long-video stability, throughput and the R4–R11 real-identity
+  quality checks are outside this synthetic-only milestone and remain `NOT_VERIFIED`.
 
 ## Rendering quality
 
